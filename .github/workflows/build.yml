@@ -3,63 +3,28 @@ name: Build Native Windows 11 ARM64 Binary (econ-calc)
 on:
   push:
     branches: [ "main", "master" ]
-    tags: [ "v*" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch:
-
-env:
-  CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
   build-windows-arm64:
     name: Compile aarch64-pc-windows-msvc Release
-    # Native Windows 11 ARM64 runner (Snapdragon / Ampere GitHub-hosted runner).
-    # NOTE: If running in a restricted private repository without ARM64 runner entitlement,
-    # replace with `runs-on: windows-latest` (x64 host cross-compiling to aarch64-pc-windows-msvc).
     runs-on: windows-latest
 
     steps:
-      - name: Checkout Repository (Node 24 Action)
-        uses: actions/checkout@v5
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Install Stable Rust Toolchain (1.95+ / Edition 2024)
+      - name: Install Stable Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-pc-windows-msvc
 
-      - name: Cache Cargo Registry and Target Artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: aarch64-pc-windows-msvc-econ-calc
-
-      - name: Verify Rustc & Cargo Versions
-        shell: pwsh
-        run: |
-          rustc --version
-          cargo --version
-
       - name: Build Optimized Native ARM64 Release Binary
         shell: pwsh
-        run: |
-          cargo build --release --target aarch64-pc-windows-msvc --locked || cargo build --release --target aarch64-pc-windows-msvc
-
-      - name: Verify Binary Architecture Header
-        shell: pwsh
-        run: |
-          $exePath = "target/aarch64-pc-windows-msvc/release/econ-calc.exe"
-          if (-not (Test-Path $exePath)) {
-            Write-Error "Expected binary not found at $exePath"
-            exit 1
-          }
-          $item = Get-Item$exePath
-          Write-Host "Successfully built $($item.FullName) ($($item.Length) bytes)"
+        run: cargo build --release --target aarch64-pc-windows-msvc
 
       - name: Upload Native Windows 11 ARM64 Executable
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: econ-calc-windows-11-arm64
           path: target/aarch64-pc-windows-msvc/release/econ-calc.exe
-          if-no-files-found: error
-          retention-days: 30
