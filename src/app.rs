@@ -1416,7 +1416,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         }
     }
 
-fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
+    fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
         let (x_star, y_star, _, indirect_u) = self.solve_constrained_equilibrium();
 
         Plot::new("main_econ_plot")
@@ -1796,6 +1796,7 @@ fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
             Color32::from_rgb(125, 211, 252),
         );
     }
+}
 
 impl eframe::App for EconCalcApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
