@@ -1,6 +1,6 @@
 use crate::exporter::{
-    ActiveModelKind, ExportOutcome, ExportPayload, GridRow, ReportFormat,
-    export_and_launch_positron,
+    ActiveModelKind, ExportOutcome, ExportPayload, GridRow, ReportFormat, ARCH_FULL_LABEL,
+    ARCH_SHORT_LABEL, export_and_launch_positron,
 };
 use eframe::egui::{
     self, Color32, FontFamily, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, TextStyle,
@@ -370,9 +370,7 @@ impl EconCalcApp {
             editor_script: initial_script,
             console_logs: Vec::new(),
             eval_counter: 0,
-            status_banner:
-                "Positron Symbolic Engine Ready — Native Windows 11 ARM64 (aarch64-pc-windows-msvc)"
-                    .to_string(),
+            status_banner: format!("Positron Symbolic Engine Ready — {}", ARCH_FULL_LABEL),
             domain_min: 0.25_f64,
             domain_max: 25.0_f64,
             probe_x: 11.25_f64,
@@ -588,8 +586,9 @@ impl EconCalcApp {
                 self.console_logs.push(ConsoleLogEntry {
                     timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
                     source_line: raw_line.clone(),
-                    message: "Syntax error: expected `=` assignment (`param = val` or `f(x) = expr`)."
-                        .to_string(),
+                    message:
+                        "Syntax error: expected `=` assignment (`param = val` or `f(x) = expr`)."
+                            .to_string(),
                     is_error: true,
                 });
                 continue;
@@ -615,7 +614,9 @@ impl EconCalcApp {
                 let sig = lhs_clean.replace(' ', "");
                 match self.eval_expression_str(&rhs_clean, self.probe_x, 10.0_f64) {
                     Ok(sample_val) => {
-                        self.workspace.functions.insert(sig.clone(), rhs_clean.clone());
+                        self.workspace
+                            .functions
+                            .insert(sig.clone(), rhs_clean.clone());
                         parsed_funcs += 1;
                         self.console_logs.push(ConsoleLogEntry {
                             timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
@@ -687,11 +688,8 @@ impl EconCalcApp {
         }
 
         self.status_banner = format!(
-            "Evaluated Run #{:02}: {} parameter(s), {} function(s) active, {} error(s)",
-            run_id,
-            parsed_params,
-            parsed_funcs,
-            error_count
+            "[{}] Evaluated Run #{:02}: {} parameter(s), {} function(s) active, {} error(s)",
+            ARCH_SHORT_LABEL, run_id, parsed_params, parsed_funcs, error_count
         );
     }
 
@@ -704,7 +702,12 @@ impl EconCalcApp {
     }
 
     /// Evaluates an arbitrary expression string with all workspace parameters, composed functions, and `(x, y)` injected.
-    pub fn eval_expression_str(&self, expr_str: &str, x_val: f64, y_val: f64) -> Result<f64, String> {
+    pub fn eval_expression_str(
+        &self,
+        expr_str: &str,
+        x_val: f64,
+        y_val: f64,
+    ) -> Result<f64, String> {
         let mut ctx = meval::Context::new();
         for (k, &v) in &self.workspace.parameters {
             ctx.var(k.as_str(), v);
@@ -922,8 +925,10 @@ impl EconCalcApp {
 
         if let Some((ix, iy)) = self.find_primary_secondary_intersection() {
             let indirect_u = tfp_a * ix.max(1e-6_f64).powf(alpha) * iy.max(1e-6_f64).powf(beta);
-            let mu_x =
-                tfp_a * alpha * ix.max(1e-6_f64).powf(alpha - 1.0_f64) * iy.max(1e-6_f64).powf(beta);
+            let mu_x = tfp_a
+                * alpha
+                * ix.max(1e-6_f64).powf(alpha - 1.0_f64)
+                * iy.max(1e-6_f64).powf(beta);
             let lambda_star = mu_x / px;
             return (ix, iy, lambda_star, indirect_u);
         }
@@ -943,12 +948,7 @@ impl EconCalcApp {
 
     /// Computes second-order Hessian matrix diagnostics via `nalgebra::Matrix2` and `Vector2`.
     fn compute_hessian_diagnostics(&self, x: f64, y: f64) -> (Matrix2<f64>, Vector2<f64>, f64, f64) {
-        let tfp_a = self
-            .workspace
-            .parameters
-            .get("A")
-            .copied()
-            .unwrap_or(2.0_f64);
+        let tfp_a = self.workspace.parameters.get("A").copied().unwrap_or(2.0_f64);
         let alpha = self
             .workspace
             .parameters
@@ -1058,7 +1058,7 @@ impl EconCalcApp {
         let tikz_secondary = self.substitute_params_for_tikz(secondary_expr);
 
         format!(
-            r##"% Auto-Generated Symbolic Derivation — econ-calc (Windows 11 ARM64)
+            r##"% Auto-Generated Symbolic Derivation — econ-calc ({arch_full})
 \begin{{align*}}
 % --- Active Symbolic Functions ---
 {func_lines}% --- Structural Parameters ---
@@ -1095,6 +1095,7 @@ impl EconCalcApp {
 
 {markdown_notes}
 "##,
+            arch_full = ARCH_FULL_LABEL,
             func_lines = func_lines,
             param_lines = param_lines,
             primary_sig = primary_sig,
@@ -1183,7 +1184,7 @@ impl EconCalcApp {
             r##"# ==============================================================================
 # econ-calc Reproducible Analysis Script for Posit Positron IDE
 # Active Model: {model_title}
-# Target Architecture: Windows 11 ARM64 (aarch64-pc-windows-msvc)
+# Target Architecture: {arch_full}
 # ==============================================================================
 
 suppressPackageStartupMessages({{
@@ -1234,7 +1235,7 @@ p_main <- ggplot(sim_data, aes(x = x)) +
     subtitle = sprintf("Equilibrium: (x* = %.4f, y* = %.4f) | lambda* = %.4f", workspace_params$x_star, workspace_params$y_star, workspace_params$lambda_star),
     x = "Domain Variable x",
     y = "Evaluated Response y",
-    caption = "Exported from econ-calc Dynamic Mathematical IDE (ARM64)"
+    caption = "Exported from econ-calc Dynamic Mathematical IDE ({arch_short})"
   ) +
   theme_minimal(base_size = 13)
 
@@ -1242,6 +1243,8 @@ print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
 "##,
             model_title = self.active_model.title(),
+            arch_full = ARCH_FULL_LABEL,
+            arch_short = ARCH_SHORT_LABEL,
             tibble_body = tibble_body,
             tfp_a = tfp_a,
             alpha = alpha,
@@ -1380,7 +1383,7 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
     }
 
     // =========================================================================
-    // TOP BAR: Workspace Branding, Theme, & Status
+    // TOP BAR: Workspace Branding, Architecture Badge, Theme, & Status
     // =========================================================================
     fn render_top_header(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
@@ -1389,6 +1392,12 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                     .font(FontId::proportional(17.5_f32))
                     .strong()
                     .color(Color32::from_rgb(56, 189, 248)),
+            );
+            ui.label(
+                RichText::new(format!("[{}]", ARCH_SHORT_LABEL))
+                    .font(FontId::monospace(12.0_f32))
+                    .strong()
+                    .color(Color32::from_rgb(250, 204, 21)),
             );
             ui.label(
                 RichText::new("Desmos × RStudio × Positron Symbolic IDE")
@@ -1451,7 +1460,9 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                             .strong()
                             .color(Color32::from_rgb(248, 113, 113)),
                     )
-                    .on_hover_text("Clears all symbolic functions, parameters, notes, and CSV data.")
+                    .on_hover_text(
+                        "Clears all symbolic functions, parameters, notes, and CSV data.",
+                    )
                     .clicked()
                 {
                     self.workspace.clear();
@@ -1460,8 +1471,9 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                     self.console_logs.push(ConsoleLogEntry {
                         timestamp_tag: "CLEAR".to_string(),
                         source_line: "workspace.clear()".to_string(),
-                        message: "Removed all symbolic functions, parameters, and scratchpad data."
-                            .to_string(),
+                        message:
+                            "Removed all symbolic functions, parameters, and scratchpad data."
+                                .to_string(),
                         is_error: false,
                     });
                 }
@@ -1749,7 +1761,9 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
             let lo = 0.01_f64.min(current - 0.5_f64);
             let hi = 1.50_f64.max(current + 0.5_f64);
             (lo, hi)
-        } else if lower_name == "i" || lower_name.contains("income") || lower_name.contains("y_bar")
+        } else if lower_name == "i"
+            || lower_name.contains("income")
+            || lower_name.contains("y_bar")
         {
             let lo = 1.0_f64.min(current * 0.2_f64);
             let hi = 300.0_f64.max(current * 2.5_f64);
@@ -2561,5 +2575,30 @@ impl eframe::App for EconCalcApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.render_center_panel(ui);
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_latex_for_meval() {
+        let raw = r"\alpha \cdot x^{\beta} + \times 2";
+        let sanitized = EconCalcApp::sanitize_for_meval(raw);
+        assert_eq!(sanitized, "alpha * x^(beta) + * 2");
+    }
+
+    #[test]
+    fn test_replace_identifier_word_boundary() {
+        let expr = "alpha + alpha_1 + price_x * x";
+        let out = EconCalcApp::replace_identifier_token(expr, "alpha", "\\alpha");
+        assert_eq!(out, "\\alpha + alpha_1 + price_x * x");
+    }
+
+    #[test]
+    fn test_architecture_labels_non_empty() {
+        assert!(!ARCH_SHORT_LABEL.is_empty());
+        assert!(!ARCH_FULL_LABEL.is_empty());
     }
 }
