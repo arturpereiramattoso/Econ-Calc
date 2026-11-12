@@ -6,6 +6,7 @@ use eframe::egui::{
     self, Color32, FontFamily, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, TextStyle,
     Ui, Vec2,
 };
+use egui_extras as _;
 use egui_plot::{Legend, Line, LineStyle, MarkerShape, Plot, PlotPoints, Points, VLine};
 use nalgebra::{Matrix2, Vector2};
 use std::borrow::Borrow;
@@ -232,7 +233,7 @@ impl SnippetTemplate {
     fn script_text(self) -> &'static str {
         match self {
             SnippetTemplate::CobbDouglas => {
-                r#"# Cobb-Douglas Production & Isoquant-Isocost Tangency
+                r##"# Cobb-Douglas Production & Isoquant-Isocost Tangency
 A = 2.0
 \alpha = 0.45
 \beta = 0.55
@@ -244,10 +245,10 @@ Y_bar = 18.0
 # Isoquant K(L) for target output Y_bar and Isocost Line
 f(x) = (Y_bar / (A * x^\alpha))^(1 / \beta)
 g(x) = (I - price_x * x) / price_y
-mp_l(x) = A * \alpha * x^(\alpha - 1) * (10.0^\beta)"#
+mp_l(x) = A * \alpha * x^(\alpha - 1) * (10.0^\beta)"##
             }
             SnippetTemplate::BudgetConstraint => {
-                r#"# Consumer Constrained Utility Maximization (Marshallian Demand)
+                r##"# Consumer Constrained Utility Maximization (Marshallian Demand)
 A = 1.5
 \alpha = 0.50
 \beta = 0.50
@@ -259,10 +260,10 @@ Y_bar = 16.4317
 # Indifference Curve f(x), Budget Line g(x), and Substituted Utility u(x)
 f(x) = (Y_bar / (A * x^\alpha))^(1 / \beta)
 g(x) = (I - price_x * x) / price_y
-u(x) = A * x^\alpha * g(x)^\beta"#
+u(x) = A * x^\alpha * g(x)^\beta"##
             }
             SnippetTemplate::IsLmMacro => {
-                r#"# Macroeconomics IS-LM Goods & Money Market Equilibrium (x = Output Y, y = Interest Rate r)
+                r##"# Macroeconomics IS-LM Goods & Money Market Equilibrium (x = Output Y, y = Interest Rate r)
 c_0 = 2.5
 c_1 = 0.65
 I_0 = 3.2
@@ -276,10 +277,10 @@ h = 18.0
 
 # IS Curve r(Y) and LM Curve r(Y)
 f(x) = (c_0 - c_1 * T + I_0 + G - (1.0 - c_1) * x) / b * 100.0
-g(x) = (k * x - M_s / P) / h * 100.0"#
+g(x) = (k * x - M_s / P) / h * 100.0"##
             }
             SnippetTemplate::SolowGrowth => {
-                r#"# Solow-Swan Neoclassical Growth Model (x = Capital per Worker k)
+                r##"# Solow-Swan Neoclassical Growth Model (x = Capital per Worker k)
 A = 2.2
 \alpha = 0.35
 s = 0.28
@@ -289,10 +290,10 @@ n = 0.02
 # Actual Investment s*f(k), Break-Even Investment (delta + n)*k, Output y(k)
 f(x) = s * A * x^\alpha
 g(x) = (\delta + n) * x
-y(x) = A * x^\alpha"#
+y(x) = A * x^\alpha"##
             }
             SnippetTemplate::MonopolistProfit => {
-                r#"# Imperfect Competition: Inverse Demand, Marginal Revenue, Marginal Cost (x = Quantity Q)
+                r##"# Imperfect Competition: Inverse Demand, Marginal Revenue, Marginal Cost (x = Quantity Q)
 a = 28.0
 b = 0.85
 c_0 = 12.0
@@ -303,7 +304,7 @@ c_2 = 0.25
 f(x) = a - 2.0 * b * x
 g(x) = c_1 + 2.0 * c_2 * x
 demand(x) = a - b * x
-profit(x) = demand(x) * x - (c_0 + c_1 * x + c_2 * x^2)"#
+profit(x) = demand(x) * x - (c_0 + c_1 * x + c_2 * x^2)"##
             }
         }
     }
@@ -1057,7 +1058,7 @@ impl EconCalcApp {
         let tikz_secondary = self.substitute_params_for_tikz(secondary_expr);
 
         format!(
-            r#"% Auto-Generated Symbolic Derivation — econ-calc (Windows 11 ARM64)
+            r##"% Auto-Generated Symbolic Derivation — econ-calc (Windows 11 ARM64)
 \begin{{align*}}
 % --- Active Symbolic Functions ---
 {func_lines}% --- Structural Parameters ---
@@ -1093,7 +1094,7 @@ impl EconCalcApp {
 ## Theoretical Interpretation & User Markdown Notes
 
 {markdown_notes}
-"#,
+"##,
             func_lines = func_lines,
             param_lines = param_lines,
             primary_sig = primary_sig,
@@ -1179,7 +1180,7 @@ impl EconCalcApp {
         };
 
         format!(
-            r#"# ==============================================================================
+            r##"# ==============================================================================
 # econ-calc Reproducible Analysis Script for Posit Positron IDE
 # Active Model: {model_title}
 # Target Architecture: Windows 11 ARM64 (aarch64-pc-windows-msvc)
@@ -1239,7 +1240,7 @@ p_main <- ggplot(sim_data, aes(x = x)) +
 
 print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
-"#,
+"##,
             model_title = self.active_model.title(),
             tibble_body = tibble_body,
             tfp_a = tfp_a,
