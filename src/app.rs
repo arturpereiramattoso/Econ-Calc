@@ -1,4 +1,3 @@
-```rust
 use crate::exporter::{
     ActiveModelKind, ExportPayload, GridRow, ReportFormat, export_and_launch_positron,
 };
