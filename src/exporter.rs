@@ -188,7 +188,7 @@ fn write_simulation_csv(path: &Path, rows: &[GridRow]) -> Result<(), String> {
 
 fn write_r_analysis_script(path: &Path, payload: &ExportPayload) -> Result<(), String> {
     let script = format!(
-        r#"# ==============================================================================
+        r##"# ==============================================================================
 # econ-calc Reproducible Analysis Script for Posit Positron IDE
 # Active Model: {model_title}
 # Target Architecture: Windows 11 ARM64 (aarch64-pc-windows-msvc)
@@ -254,7 +254,7 @@ p_main <- ggplot(sim_data, aes(x = x)) +
 
 print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
-"#,
+"##,
         model_title = payload.model_kind.title(),
         tfp_a = payload.tfp_a,
         alpha = payload.alpha,
@@ -288,7 +288,7 @@ fn write_literate_report(path: &Path, payload: &ExportPayload) -> Result<(), Str
     };
 
     let report_body = format!(
-        r#"{yaml_header}
+        r##"{yaml_header}
 ## 1. Structural Specification & Analytical Derivation
 
 The active workspace in `econ-calc` evaluated the **{model_title}** template. Below is the exact symbolic and numerical specification exported from the IDE:
@@ -315,36 +315,40 @@ The active workspace in `econ-calc` evaluated the **{model_title}** template. Be
 
 ```text
 {game_summary}
+```
 
-3. Reproducible R Analysis & Visualization
+## 3. Reproducible R Analysis & Visualization
+
+```r
 library(tidyverse)
 
 sim_data <- read_csv("simulation_data.csv", show_col_types = FALSE)
 head(sim_data, 10)
 
 source("model_analysis.R")
+```
+"##,
+        yaml_header = yaml_header,
+        model_title = payload.model_kind.title(),
+        latex_block = payload.latex_derivation,
+        tfp_a = payload.tfp_a,
+        alpha = payload.alpha,
+        beta = payload.beta,
+        price_x = payload.price_x,
+        price_y = payload.price_y,
+        income = payload.income,
+        target_output = payload.target_output,
+        x_star = payload.x_star,
+        y_star = payload.y_star,
+        lambda_star = payload.lambda_star,
+        indirect_utility = payload.indirect_utility,
+        game_summary = payload.game_summary,
+    );
 
-"#,
-yaml_header = yaml_header,
-model_title = payload.model_kind.title(),
-latex_block = payload.latex_derivation,
-tfp_a = payload.tfp_a,
-alpha = payload.alpha,
-beta = payload.beta,
-price_x = payload.price_x,
-price_y = payload.price_y,
-income = payload.income,
-target_output = payload.target_output,
-x_star = payload.x_star,
-y_star = payload.y_star,
-lambda_star = payload.lambda_star,
-indirect_utility = payload.indirect_utility,
-game_summary = payload.game_summary,
-);
-let mut file = File::create(path)
-.map_err(|e| format!("Could not create report {:?}: {}", path, e))?;
-file.write_all(report_body.as_bytes())
-.map_err(|e| format!("Could not write report {:?}: {}", path, e))
+    let mut file = File::create(path)
+        .map_err(|e| format!("Could not create report {:?}: {}", path, e))?;
+    file.write_all(report_body.as_bytes())
+        .map_err(|e| format!("Could not write report {:?}: {}", path, e))
 }
 fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
     // Primary attempt: launch Posit's Positron IDE directly on the workspace directory
