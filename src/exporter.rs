@@ -5,6 +5,21 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(target_arch = "aarch64")]
+pub const ARCH_SHORT_LABEL: &str = "ARM64 Snapdragon";
+#[cfg(target_arch = "aarch64")]
+pub const ARCH_FULL_LABEL: &str = "Windows 11 ARM64 (Qualcomm Snapdragon / aarch64-pc-windows-msvc)";
+
+#[cfg(target_arch = "x86_64")]
+pub const ARCH_SHORT_LABEL: &str = "x64 Intel/AMD";
+#[cfg(target_arch = "x86_64")]
+pub const ARCH_FULL_LABEL: &str = "Windows 10/11 x64 (Intel & AMD / x86_64-pc-windows-msvc)";
+
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+pub const ARCH_SHORT_LABEL: &str = std::env::consts::ARCH;
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+pub const ARCH_FULL_LABEL: &str = std::env::consts::ARCH;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ReportFormat {
     QuartoQmd,
@@ -191,7 +206,7 @@ fn write_r_analysis_script(path: &Path, payload: &ExportPayload) -> Result<(), S
         r##"# ==============================================================================
 # econ-calc Reproducible Analysis Script for Posit Positron IDE
 # Active Model: {model_title}
-# Target Architecture: Windows 11 ARM64 (aarch64-pc-windows-msvc)
+# Target Architecture: {arch_full}
 # ==============================================================================
 
 suppressPackageStartupMessages({{
@@ -244,7 +259,7 @@ p_main <- ggplot(sim_data, aes(x = x)) +
     ),
     x = "x (Input L / Good X)",
     y = "y (Input K / Good Y / f(x))",
-    caption = "Generated natively by econ-calc (Windows 11 ARM64)"
+    caption = "Generated natively by econ-calc ({arch_short})"
   ) +
   theme_minimal(base_size = 13) +
   theme(
@@ -256,6 +271,8 @@ print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
 "##,
         model_title = payload.model_kind.title(),
+        arch_full = ARCH_FULL_LABEL,
+        arch_short = ARCH_SHORT_LABEL,
         tfp_a = payload.tfp_a,
         alpha = payload.alpha,
         beta = payload.beta,
@@ -278,12 +295,14 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
 fn write_literate_report(path: &Path, payload: &ExportPayload) -> Result<(), String> {
     let yaml_header = match payload.report_format {
         ReportFormat::QuartoQmd => format!(
-            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc ARM64)\"\nformat:\n  html:\n    toc: true\n    code-fold: false\n    theme: cosmo\nexecute:\n  echo: true\n  warning: false\n---\n",
-            payload.model_kind.title()
+            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc {})\"\nformat:\n  html:\n    toc: true\n    code-fold: false\n    theme: cosmo\nexecute:\n  echo: true\n  warning: false\n---\n",
+            payload.model_kind.title(),
+            ARCH_SHORT_LABEL
         ),
         ReportFormat::RMarkdownRmd => format!(
-            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc ARM64)\"\noutput:\n  html_document:\n    toc: true\n    theme: flatly\n---\n",
-            payload.model_kind.title()
+            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc {})\"\noutput:\n  html_document:\n    toc: true\n    theme: flatly\n---\n",
+            payload.model_kind.title(),
+            ARCH_SHORT_LABEL
         ),
     };
 
@@ -291,7 +310,7 @@ fn write_literate_report(path: &Path, payload: &ExportPayload) -> Result<(), Str
         r##"{yaml_header}
 ## 1. Structural Specification & Analytical Derivation
 
-The active workspace in `econ-calc` evaluated the **{model_title}** template. Below is the exact symbolic and numerical specification exported from the IDE:
+The active workspace in `econ-calc` ({arch_full}) evaluated the **{model_title}** template. Below is the exact symbolic and numerical specification exported from the IDE:
 
 {latex_block}
 
@@ -311,7 +330,7 @@ The active workspace in `econ-calc` evaluated the **{model_title}** template. Be
 | Shadow Price / Multiplier | $\lambda^*$ | `{lambda_star:.6}` |
 | Indirect Utility / Objective | $V^*$ | `{indirect_utility:.6}` |
 
-### 2x2 Normal-Form Game Summary (if active)
+### 2x2 Normal-Form Game / Workspace Summary
 
 ```text
 {game_summary}
@@ -329,6 +348,7 @@ source("model_analysis.R")
 ```
 "##,
         yaml_header = yaml_header,
+        arch_full = ARCH_FULL_LABEL,
         model_title = payload.model_kind.title(),
         latex_block = payload.latex_derivation,
         tfp_a = payload.tfp_a,
@@ -350,6 +370,7 @@ source("model_analysis.R")
     file.write_all(report_body.as_bytes())
         .map_err(|e| format!("Could not write report {:?}: {}", path, e))
 }
+
 fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
     // Primary attempt: launch Posit's Positron IDE directly on the workspace directory
     if let Ok(child) = Command::new("positron").arg(export_dir).spawn() {
@@ -362,9 +383,13 @@ fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
             ),
         );
     }
-    // Windows 11 ARM64 cmd/shim fallback (positron.cmd)
+    // Windows cmd/shim fallback (positron.cmd)
     if cfg!(target_os = "windows") {
-        if let Ok(child) = Command::new("cmd").args(["/C", "positron"]).arg(export_dir).spawn() {
+        if let Ok(child) = Command::new("cmd")
+            .args(["/C", "positron"])
+            .arg(export_dir)
+            .spawn()
+        {
             return (
                 "positron.cmd".to_string(),
                 format!(
