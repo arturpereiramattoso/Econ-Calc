@@ -448,7 +448,7 @@ impl EconCalcApp {
         default
     }
 
-    /// Sets a parameter value by symbol if present, or inserts a new parameter if absent.
+    /// Sets a parameter value by symbol if present.
     fn set_param(&mut self, symbol: &str, value: f64) {
         for p in &mut self.parameters {
             if p.symbol == symbol {
@@ -1118,20 +1118,22 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
             }
 
             if let Some(rhs) = line.strip_prefix("f(x) =") {
-                self.custom_expr = rhs.trim().to_string();
+                let new_expr = rhs.trim().to_string();
+                self.custom_expr = new_expr.clone();
                 self.console_history.push(ConsoleEntry {
                     command: line,
-                    output: format!("Updated primary curve f(x) = {}", self.custom_expr),
+                    output: format!("Updated primary curve f(x) = {}", new_expr),
                     is_error: false,
                 });
                 continue;
             }
 
             if let Some(rhs) = line.strip_prefix("g(x) =") {
-                self.secondary_expr = rhs.trim().to_string();
+                let new_expr = rhs.trim().to_string();
+                self.secondary_expr = new_expr.clone();
                 self.console_history.push(ConsoleEntry {
                     command: line,
-                    output: format!("Updated secondary curve g(x) = {}", self.secondary_expr),
+                    output: format!("Updated secondary curve g(x) = {}", new_expr),
                     is_error: false,
                 });
                 continue;
@@ -1139,16 +1141,18 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
 
             // Support direct parameter assignment `param = value` in CAS editor
             if let Some((lhs, rhs)) = line.split_once('=') {
-                let sym = lhs.trim();
+                let sym = lhs.trim().to_string();
+                let rhs_expr = rhs.trim().to_string();
                 let is_known_param = self.parameters.iter().any(|p| p.symbol == sym);
                 if is_known_param {
                     let probe_x = self.get_param("x0", 6.0);
-                    match self.eval_expr_at(rhs.trim(), probe_x) {
+                    match self.eval_expr_at(&rhs_expr, probe_x) {
                         Ok(val) => {
-                            self.set_param(sym, val);
+                            self.set_param(&sym, val);
+                            let out_msg = format!("Updated parameter {} = {:.6}", sym, val);
                             self.console_history.push(ConsoleEntry {
                                 command: line,
-                                output: format!("Updated parameter {} = {:.6}", sym, val),
+                                output: out_msg,
                                 is_error: false,
                             });
                         }
@@ -1421,7 +1425,9 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
             if ui
                 .selectable_label(
                     explorer_selected,
-                    RichText::new("📚 Explorer").font(FontId::proportional(13.5_f32)).strong(),
+                    RichText::new("📚 Explorer")
+                        .font(FontId::proportional(13.5_f32))
+                        .strong(),
                 )
                 .on_hover_text("Model Explorer & Preset Library")
                 .clicked()
@@ -1438,7 +1444,9 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
             if ui
                 .selectable_label(
                     settings_selected,
-                    RichText::new("⚙ Settings").font(FontId::proportional(13.5_f32)).strong(),
+                    RichText::new("⚙ Settings")
+                        .font(FontId::proportional(13.5_f32))
+                        .strong(),
                 )
                 .on_hover_text("Global IDE Settings (Theme, 3D Resolution, UI Scale)")
                 .clicked()
@@ -1795,7 +1803,7 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                     for param in &mut self.parameters {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(format!("{}", param.symbol))
+                                RichText::new(param.symbol.to_string())
                                     .monospace()
                                     .strong()
                                     .color(Color32::from_rgb(125, 211, 252)),
@@ -1805,16 +1813,14 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                                     .font(FontId::proportional(12.0_f32)),
                             );
                         });
-                        ui.add(
-                            egui::Slider::new(&mut param.value, param.min..=param.max)
-                                .clamping(egui::SliderClamping::Always),
-                        );
+                        ui.add(egui::Slider::new(&mut param.value, param.min..=param.max));
                         ui.add_space(2.0_f32);
                     }
 
                     ui.separator();
                     egui::CollapsingHeader::new(
-                        RichText::new("➕ Add Custom Environment Variable").font(FontId::proportional(12.0_f32)),
+                        RichText::new("➕ Add Custom Environment Variable")
+                            .font(FontId::proportional(12.0_f32)),
                     )
                     .default_open(false)
                     .show(ui, |ui| {
@@ -2039,7 +2045,10 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                         let y_val = self.eval_expr_at(&self.custom_expr, r).unwrap_or(0.0);
                         self.console_history.push(ConsoleEntry {
                             command: format!("intersect f(x) == g(x) near {:.2}", guess),
-                            output: format!("Intersection converged at (x* = {:.6}, y* = {:.6})", r, y_val),
+                            output: format!(
+                                "Intersection converged at (x* = {:.6}, y* = {:.6})",
+                                r, y_val
+                            ),
                             is_error: false,
                         });
                     }
@@ -2386,7 +2395,10 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
 
                     plot_ui.points(
                         Points::new(vec![[x_star, y_star]])
-                            .name(format!("Marshallian Optimum (x*={:.2}, y*={:.2})", x_star, y_star))
+                            .name(format!(
+                                "Marshallian Optimum (x*={:.2}, y*={:.2})",
+                                x_star, y_star
+                            ))
                             .radius(6.0_f32)
                             .color(Color32::from_rgb(34, 197, 94)),
                     );
