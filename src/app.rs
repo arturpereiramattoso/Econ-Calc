@@ -2,7 +2,7 @@ use crate::exporter::{
     ActiveModelKind, ExportPayload, GridRow, ReportFormat, export_and_launch_positron,
 };
 use eframe::egui::{
-    self, Color32, CornerRadius, FontId, Pos2, Rect, RichText, Sense, Stroke, Ui, Vec2,
+    self, Color32, FontId, Pos2, RichText, Rounding, Sense, Stroke, Ui, Vec2,
 };
 use egui_plot::{Legend, Line, Plot, PlotPoints, Points, VLine};
 use nalgebra::{Matrix2, Vector2};
@@ -915,7 +915,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         ui.separator();
 
         egui::ScrollArea::vertical()
-            .id_salt("left_editor_scroll")
+            .id_source("left_editor_scroll")
             .show(ui, |ui| match self.active_model {
                 ActiveModelKind::CustomExpression => self.render_custom_expr_editor(ui),
                 ActiveModelKind::CobbDouglas => self.render_cobb_douglas_editor(ui),
@@ -1297,7 +1297,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         };
 
         egui::ScrollArea::vertical()
-            .id_salt("right_env_grid_scroll")
+            .id_source("right_env_grid_scroll")
             .show(ui, |ui| {
                 egui::Grid::new("numerical_simulation_table")
                     .striped(true)
@@ -1356,7 +1356,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
 
         let available_height = (ui.available_height() - 34.0).max(60.0);
         egui::ScrollArea::vertical()
-            .id_salt("console_repl_scroll")
+            .id_source("console_repl_scroll")
             .max_height(available_height)
             .stick_to_bottom(true)
             .show(ui, |ui| {
@@ -1416,7 +1416,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         }
     }
 
-    fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
+fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
         let (x_star, y_star, _, indirect_u) = self.solve_constrained_equilibrium();
 
         Plot::new("main_econ_plot")
@@ -1441,13 +1441,15 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                         .collect();
 
                     plot_ui.line(
-                        Line::new(format!("f(x) = {}", self.custom_expr), primary_pts)
-                            .width(2.4)
+                        Line::new(primary_pts)
+                            .name(format!("f(x) = {}", self.custom_expr))
+                            .width(2.4_f32)
                             .color(Color32::from_rgb(59, 130, 246)),
                     );
                     plot_ui.line(
-                        Line::new(format!("g(x) = {}", self.secondary_expr), secondary_pts)
-                            .width(1.8)
+                        Line::new(secondary_pts)
+                            .name(format!("g(x) = {}", self.secondary_expr))
+                            .width(1.8_f32)
                             .color(Color32::from_rgb(249, 115, 22)),
                     );
 
@@ -1460,23 +1462,22 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                             })
                             .collect();
                         plot_ui.line(
-                            Line::new("Derivative f'(x)", deriv_pts)
-                                .width(1.5)
+                            Line::new(deriv_pts)
+                                .name("Derivative f'(x)")
+                                .width(1.5_f32)
                                 .color(Color32::from_rgb(168, 85, 247)),
                         );
                     }
 
-                    if let Ok(y0) = self.eval_expr_at(&self.custom_expr, self.eval_point_x)
-                        && y0.is_finite()
-                    {
-                        plot_ui.points(
-                            Points::new(
-                                format!("Probe ({:.3}, {:.3})", self.eval_point_x, y0),
-                                vec![[self.eval_point_x, y0]],
-                            )
-                            .radius(5.5)
-                            .color(Color32::from_rgb(34, 197, 94)),
-                        );
+                    if let Ok(y0) = self.eval_expr_at(&self.custom_expr, self.eval_point_x) {
+                        if y0.is_finite() {
+                            plot_ui.points(
+                                Points::new(vec![[self.eval_point_x, y0]])
+                                    .name(format!("Probe ({:.3}, {:.3})", self.eval_point_x, y0))
+                                    .radius(5.5_f32)
+                                    .color(Color32::from_rgb(34, 197, 94)),
+                            );
+                        }
                     }
                 }
                 ActiveModelKind::CobbDouglas => {
@@ -1502,7 +1503,8 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                             })
                             .collect();
                         plot_ui.line(
-                            Line::new(format!("{} ({:.1})", label_suffix, y_target), iso_pts)
+                            Line::new(iso_pts)
+                                .name(format!("{} ({:.1})", label_suffix, y_target))
                                 .width(width),
                         );
                     }
@@ -1516,18 +1518,17 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                         .collect();
 
                     plot_ui.line(
-                        Line::new(format!("Isocost Line (C* = {:.2})", min_cost), isocost_pts)
-                            .width(2.0)
+                        Line::new(isocost_pts)
+                            .name(format!("Isocost Line (C* = {:.2})", min_cost))
+                            .width(2.0_f32)
                             .color(Color32::from_rgb(239, 68, 68)),
                     );
 
                     plot_ui.points(
-                        Points::new(
-                            format!("Cost-Min Tangency (L*={:.2}, K*={:.2})", x_star, y_star),
-                            vec![[x_star, y_star]],
-                        )
-                        .radius(6.0)
-                        .color(Color32::from_rgb(34, 197, 94)),
+                        Points::new(vec![[x_star, y_star]])
+                            .name(format!("Cost-Min Tangency (L*={:.2}, K*={:.2})", x_star, y_star))
+                            .radius(6.0_f32)
+                            .color(Color32::from_rgb(34, 197, 94)),
                     );
                 }
                 ActiveModelKind::ConstrainedUtility => {
@@ -1552,7 +1553,8 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                             })
                             .collect();
                         plot_ui.line(
-                            Line::new(format!("{} = {:.2}", label_prefix, u_level), indiff_pts)
+                            Line::new(indiff_pts)
+                                .name(format!("{} = {:.2}", label_prefix, u_level))
                                 .width(width),
                         );
                     }
@@ -1566,24 +1568,20 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                         .collect();
 
                     plot_ui.line(
-                        Line::new(
-                            format!(
+                        Line::new(budget_pts)
+                            .name(format!(
                                 "Budget Constraint ({:.1}x + {:.1}y = {:.1})",
                                 self.price_x, self.price_y, self.income
-                            ),
-                            budget_pts,
-                        )
-                        .width(2.2)
-                        .color(Color32::from_rgb(239, 68, 68)),
+                            ))
+                            .width(2.2_f32)
+                            .color(Color32::from_rgb(239, 68, 68)),
                     );
 
                     plot_ui.points(
-                        Points::new(
-                            format!("Equilibrium (x*={:.2}, y*={:.2})", x_star, y_star),
-                            vec![[x_star, y_star]],
-                        )
-                        .radius(6.0)
-                        .color(Color32::from_rgb(34, 197, 94)),
+                        Points::new(vec![[x_star, y_star]])
+                            .name(format!("Equilibrium (x*={:.2}, y*={:.2})", x_star, y_star))
+                            .radius(6.0_f32)
+                            .color(Color32::from_rgb(34, 197, 94)),
                     );
                 }
                 ActiveModelKind::GameTheory2x2 => {
@@ -1607,34 +1605,29 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                         .collect();
 
                     plot_ui.line(
-                        Line::new(
-                            format!("E[U1 | {}] vs q", self.row_labels[0]),
-                            eu_up_pts,
-                        )
-                        .width(2.4)
-                        .color(Color32::from_rgb(59, 130, 246)),
+                        Line::new(eu_up_pts)
+                            .name(format!("E[U1 | {}] vs q", self.row_labels[0]))
+                            .width(2.4_f32)
+                            .color(Color32::from_rgb(59, 130, 246)),
                     );
                     plot_ui.line(
-                        Line::new(
-                            format!("E[U1 | {}] vs q", self.row_labels[1]),
-                            eu_down_pts,
-                        )
-                        .width(2.4)
-                        .color(Color32::from_rgb(249, 115, 22)),
+                        Line::new(eu_down_pts)
+                            .name(format!("E[U1 | {}] vs q", self.row_labels[1]))
+                            .width(2.4_f32)
+                            .color(Color32::from_rgb(249, 115, 22)),
                     );
 
                     if let (Some(q_star), Some(eu1)) = (sol.mixed_q, sol.expected_u1) {
                         plot_ui.vline(
-                            VLine::new(format!("MSNE q* = {:.3}", q_star), q_star)
+                            VLine::new(q_star)
+                                .name(format!("MSNE q* = {:.3}", q_star))
                                 .color(Color32::from_rgb(168, 85, 247)),
                         );
                         plot_ui.points(
-                            Points::new(
-                                format!("Indifference Point (q*={:.3}, E[U1]={:.3})", q_star, eu1),
-                                vec![[q_star, eu1]],
-                            )
-                            .radius(6.0)
-                            .color(Color32::from_rgb(34, 197, 94)),
+                            Points::new(vec![[q_star, eu1]])
+                                .name(format!("Indifference Point (q*={:.3}, E[U1]={:.3})", q_star, eu1))
+                                .radius(6.0_f32)
+                                .color(Color32::from_rgb(34, 197, 94)),
                         );
                     }
                 }
@@ -1670,7 +1663,7 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         } else {
             Color32::from_rgb(241, 245, 249)
         };
-        painter.rect_filled(rect, CornerRadius::same(6), bg_color);
+        painter.rect_filled(rect, Rounding::same(6.0), bg_color);
 
         let n = self.surface_resolution.max(8);
         let (x_star, y_star, _, _) = self.solve_constrained_equilibrium();
@@ -1707,7 +1700,6 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
         let center = rect.center() + Vec2::new(0.0, rect.height() * 0.08);
 
         let project = |nx: f32, ny: f32, nz: f32| -> (Pos2, f32) {
-            // Center normalized coordinates around [-1, 1]
             let cx = nx * 2.0 - 1.0;
             let cy = ny * 2.0 - 1.0;
             let cz = nz * 1.5 - 0.5;
@@ -1722,7 +1714,6 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
             (screen_pos, depth)
         };
 
-        // Collect quads for painter's algorithm depth sorting
         struct SurfaceQuad {
             pts: [Pos2; 4],
             depth: f32,
@@ -1758,7 +1749,6 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
             }
         }
 
-        // Sort back-to-front
         quads.sort_by(|a, b| {
             b.depth
                 .partial_cmp(&a.depth)
@@ -1776,27 +1766,25 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
                 painter.add(egui::Shape::convex_polygon(
                     q.pts.to_vec(),
                     fill,
-                    Stroke::new(0.65, Color32::from_rgba_unmultiplied(15, 23, 42, 140)),
+                    Stroke::new(0.65_f32, Color32::from_rgba_unmultiplied(15, 23, 42, 140)),
                 ));
             } else {
                 let stroke_col = Color32::from_rgb(r, g, b);
                 painter.add(egui::Shape::closed_line(
                     q.pts.to_vec(),
-                    Stroke::new(1.1, stroke_col),
+                    Stroke::new(1.1_f32, stroke_col),
                 ));
             }
         }
 
-        // Highlight optimal equilibrium point (x*, y*, z*) on the 3D surface
         let nx_opt = ((x_star / max_domain) as f32).clamp(0.0, 1.0);
         let ny_opt = ((y_star / max_domain) as f32).clamp(0.0, 1.0);
         let z_opt = self.tfp_a * x_star.powf(self.alpha) * y_star.powf(self.beta);
         let nz_opt = (((z_opt - z_min) / z_span) as f32).clamp(0.0, 1.0);
         let (opt_pos, _) = project(nx_opt, ny_opt, nz_opt);
         painter.circle_filled(opt_pos, 6.0, Color32::from_rgb(34, 197, 94));
-        painter.circle_stroke(opt_pos, 6.0, Stroke::new(2.0, Color32::WHITE));
+        painter.circle_stroke(opt_pos, 6.0, Stroke::new(2.0_f32, Color32::WHITE));
 
-        // HUD Overlay
         painter.text(
             rect.left_top() + Vec2::new(14.0, 12.0),
             egui::Align2::LEFT_TOP,
@@ -1808,7 +1796,6 @@ V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
             Color32::from_rgb(125, 211, 252),
         );
     }
-}
 
 impl eframe::App for EconCalcApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1818,24 +1805,18 @@ impl eframe::App for EconCalcApp {
 
         egui::TopBottomPanel::bottom("console_repl_pane")
             .resizable(true)
-            .default_size(185.0)
-            .min_size(110.0)
             .show(ctx, |ui| {
                 self.render_bottom_console_pane(ui);
             });
 
         egui::SidePanel::left("editor_pane")
             .resizable(true)
-            .default_size(385.0)
-            .min_size(280.0)
             .show(ctx, |ui| {
                 self.render_left_editor_pane(ui);
             });
 
         egui::SidePanel::right("environment_grid_pane")
             .resizable(true)
-            .default_size(355.0)
-            .min_size(260.0)
             .show(ctx, |ui| {
                 self.render_right_environment_pane(ui);
             });
