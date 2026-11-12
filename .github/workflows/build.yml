@@ -1,36 +1,76 @@
-name: Build Native Windows 11 ARM64 Binary (econ-calc)
+name: Build Native Windows Binaries (ARM64 Snapdragon & x64 Intel/AMD)
 
 on:
   push:
     branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
-  build-windows-arm64:
-    name: Compile aarch64-pc-windows-msvc Release
+  build-windows:
+    name: Build ${{ matrix.label }}
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-pc-windows-msvc
+            label: "Windows 11 ARM64 (Snapdragon)"
+            artifact_name: "econ-calc-windows-arm64"
+            binary_name: "econ-calc-windows-arm64.exe"
+            # Optimized for Qualcomm Snapdragon 7c Gen 2 (Kryo 468 / ARMv8-A NEON SIMD) & newer ARM64 CPUs
+            rustflags: "-C target-feature=+neon,+crc"
+            run_tests: false
+
+          - target: x86_64-pc-windows-msvc
+            label: "Windows 10/11 x64 (Intel & AMD)"
+            artifact_name: "econ-calc-windows-x64-intel-amd"
+            binary_name: "econ-calc-windows-x64-intel-amd.exe"
+            # Optimized with hardware SIMD (SSE4.2 + POPCNT) compatible across Intel & AMD 64-bit CPUs
+            rustflags: "-C target-feature=+sse3,+ssse3,+sse4.1,+sse4.2,+popcnt"
+            run_tests: true
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Stable Rust Toolchain
+      - name: Install Stable Rust Toolchain (${{ matrix.target }})
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-pc-windows-msvc
+          targets: ${{ matrix.target }}
 
-      - name: Build Optimized Native ARM64 Release Binary
+      - name: Cache Cargo Registry and Build Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Run Unit Tests (Native x64 Runner)
+        if: matrix.run_tests
         shell: pwsh
-        run: cargo build --release --target aarch64-pc-windows-msvc
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo test --release --target ${{ matrix.target }}
 
-      - name: Upload Native Windows 11 ARM64 Executable
+      - name: Compile Optimized Release Binary (${{ matrix.label }})
+        shell: pwsh
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage Labeled Executable (${{ matrix.binary_name }})
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/econ-calc.exe" "dist/${{ matrix.binary_name }}"
+          Get-Item "dist/${{ matrix.binary_name }}" | Select-Object Name, Length, LastWriteTime
+
+      - name: Upload ${{ matrix.label }} Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: econ-calc-windows-11-arm64
-          path: target/aarch64-pc-windows-msvc/release/econ-calc.exe
-          
-      - name: Upload compiled executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: econ-calc-windows-arm64
-          path: target/aarch64-pc-windows-msvc/release/econ-calc.exe
+          name: ${{ matrix.artifact_name }}
+          path: dist/${{ matrix.binary_name }}
+          if-no-files-found: error
