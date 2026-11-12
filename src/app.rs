@@ -1,1023 +1,1187 @@
 use crate::exporter::{
-    ActiveModelKind, ExportPayload, GridRow, ReportFormat, export_and_launch_positron,
+    ActiveModelKind, ExportOutcome, ExportPayload, GridRow, ReportFormat,
+    export_and_launch_positron,
 };
 use eframe::egui::{
-    self, Color32, FontId, Pos2, RichText, Rounding, Sense, Stroke, TextEdit, Ui, Vec2,
+    self, Color32, FontFamily, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, TextStyle,
+    Ui, Vec2,
 };
-use egui_plot::{Legend, Line, Plot, PlotPoints, Points, VLine};
+use egui_plot::{Legend, Line, LineStyle, MarkerShape, Plot, PlotPoints, Points, VLine};
 use nalgebra::{Matrix2, Vector2};
+use std::borrow::Borrow;
 
-#[derive(Debug, Clone)]
-pub struct ModelParameter {
-    pub name: String,
-    pub symbol: String,
-    pub value: f64,
-    pub min: f64,
-    pub max: f64,
+/// Deterministic insertion-ordered map (`IndexMap<K, V>`) preserving declaration sequence
+/// for symbolic parameters and functions without requiring external crate changes.
+#[derive(Debug, Clone, Default)]
+pub struct IndexMap<K, V> {
+    entries: Vec<(K, V)>,
 }
 
-impl ModelParameter {
-    pub fn new(name: &str, symbol: &str, value: f64, min: f64, max: f64) -> Self {
+impl<K, V> IndexMap<K, V>
+where
+    K: PartialEq,
+{
+    pub fn new() -> Self {
         Self {
-            name: name.to_string(),
-            symbol: symbol.to_string(),
-            value,
-            min,
-            max,
+            entries: Vec::new(),
         }
+    }
+
+    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
+        for (existing_k, existing_v) in &mut self.entries {
+            if *existing_k == key {
+                return Some(std::mem::replace(existing_v, value));
+            }
+        }
+        self.entries.push((key, value));
+        None
+    }
+
+    pub fn get<Q>(&self, key: &Q) -> Option<&V>
+    where
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
+    {
+        self.entries
+            .iter()
+            .find(|(k, _)| k.borrow() == key)
+            .map(|(_, v)| v)
+    }
+
+    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
+    where
+        K: Borrow<Q>,
+        Q: PartialEq + ?Sized,
+    {
+        if let Some(idx) = self.entries.iter().position(|(k, _)| k.borrow() == key) {
+            Some(self.entries.remove(idx).1)
+        } else {
+            None
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.entries.iter().map(|(k, _)| k)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.entries.iter().map(|(_, v)| v)
+    }
+}
+
+impl<'a, K, V> IntoIterator for &'a IndexMap<K, V> {
+    type Item = (&'a K, &'a V);
+    type IntoIter = std::iter::Map<std::slice::Iter<'a, (K, V)>, fn(&'a (K, V)) -> (&'a K, &'a V)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter().map(|(k, v)| (k, v))
+    }
+}
+
+impl<'a, K, V> IntoIterator for &'a mut IndexMap<K, V> {
+    type Item = (&'a K, &'a mut V);
+    type IntoIter =
+        std::iter::Map<std::slice::IterMut<'a, (K, V)>, fn(&'a mut (K, V)) -> (&'a K, &'a mut V)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.iter_mut().map(|(k, v)| (&*k, v))
+    }
+}
+
+/// Core Desmos-style dynamic symbolic state for the computational economics IDE.
+#[derive(Debug, Clone)]
+pub struct Workspace {
+    pub parameters: IndexMap<String, f64>,
+    pub functions: IndexMap<String, String>,
+    pub markdown_notes: String,
+    pub csv_scratchpad: String,
+}
+
+impl Workspace {
+    pub fn new_default() -> Self {
+        let mut parameters = IndexMap::new();
+        parameters.insert("A".to_string(), 2.0_f64);
+        parameters.insert("alpha".to_string(), 0.45_f64);
+        parameters.insert("beta".to_string(), 0.55_f64);
+        parameters.insert("price_x".to_string(), 4.0_f64);
+        parameters.insert("price_y".to_string(), 5.0_f64);
+        parameters.insert("I".to_string(), 100.0_f64);
+        parameters.insert("Y_bar".to_string(), 18.0_f64);
+
+        let mut functions = IndexMap::new();
+        functions.insert(
+            "f(x)".to_string(),
+            "(Y_bar / (A * x^alpha))^(1 / beta)".to_string(),
+        );
+        functions.insert("g(x)".to_string(), "(I - price_x * x) / price_y".to_string());
+        functions.insert(
+            "u(x)".to_string(),
+            "A * x^alpha * ((I - price_x * x) / price_y)^beta".to_string(),
+        );
+
+        let markdown_notes = "\
+### Microeconomic Tangency & Constrained Optimization Notes
+- **Indifference / Isoquant Curve** $f(x)$ traces combinations of $(x, y)$ yielding constant output $\\bar{Y}$.
+- **Budget / Isocost Constraint** $g(x) = \\frac{I - P_x x}{P_y}$ has constant slope $-\\frac{P_x}{P_y}$.
+- **Optimality Condition:** Interior optimum satisfies $\\text{MRS}_{x,y} = \\frac{\\alpha y}{\\beta x} = \\frac{P_x}{P_y}$."
+            .to_string();
+
+        let csv_scratchpad = "\
+x,y
+1.5,16.8
+3.0,13.5
+5.0,11.2
+8.0,8.6
+11.25,11.0
+14.0,6.2
+18.0,4.5"
+            .to_string();
+
+        Self {
+            parameters,
+            functions,
+            markdown_notes,
+            csv_scratchpad,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.parameters.clear();
+        self.functions.clear();
+        self.markdown_notes.clear();
+        self.csv_scratchpad.clear();
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveModel {
-    CustomCAS,
-    CobbDouglas,
-    ConstrainedUtility,
-    GameTheory,
-}
-
-impl ActiveModel {
-    pub fn to_exporter_kind(self) -> ActiveModelKind {
-        match self {
-            ActiveModel::CustomCAS => ActiveModelKind::CustomExpression,
-            ActiveModel::CobbDouglas => ActiveModelKind::CobbDouglas,
-            ActiveModel::ConstrainedUtility => ActiveModelKind::ConstrainedUtility,
-            ActiveModel::GameTheory => ActiveModelKind::GameTheory2x2,
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ActiveModel::CustomCAS => "Custom CAS Workspace",
-            ActiveModel::CobbDouglas => "Cobb-Douglas Production & Isoquant",
-            ActiveModel::ConstrainedUtility => "Lagrangian Constrained Utility",
-            ActiveModel::GameTheory => "2x2 Normal-Form Game Theory",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SidebarTab {
-    ModelExplorer,
-    Settings,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ViewportTab {
+enum ViewportMode {
     Plot2D,
     Surface3D,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CodeConsoleTab {
-    CasMathInput,
-    LatexOutput,
+enum BottomEditorTab {
+    CommandEditor,
+    ConsoleLog,
+    LatexDerivation,
     RScriptPreview,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RightDataTab {
+    SimulationGrid,
+    CsvPasteboard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SnippetTemplate {
+    CobbDouglas,
+    BudgetConstraint,
+    IsLmMacro,
+    SolowGrowth,
+    MonopolistProfit,
+}
+
+impl SnippetTemplate {
+    fn all() -> [SnippetTemplate; 5] {
+        [
+            SnippetTemplate::CobbDouglas,
+            SnippetTemplate::BudgetConstraint,
+            SnippetTemplate::IsLmMacro,
+            SnippetTemplate::SolowGrowth,
+            SnippetTemplate::MonopolistProfit,
+        ]
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SnippetTemplate::CobbDouglas => "Cobb-Douglas",
+            SnippetTemplate::BudgetConstraint => "Budget Constraint",
+            SnippetTemplate::IsLmMacro => "IS-LM",
+            SnippetTemplate::SolowGrowth => "Solow-Swan Growth",
+            SnippetTemplate::MonopolistProfit => "Monopoly MR = MC",
+        }
+    }
+
+    fn model_kind(self) -> ActiveModelKind {
+        match self {
+            SnippetTemplate::CobbDouglas => ActiveModelKind::CobbDouglas,
+            SnippetTemplate::BudgetConstraint => ActiveModelKind::ConstrainedUtility,
+            SnippetTemplate::IsLmMacro => ActiveModelKind::CustomExpression,
+            SnippetTemplate::SolowGrowth => ActiveModelKind::CustomExpression,
+            SnippetTemplate::MonopolistProfit => ActiveModelKind::GameTheory2x2,
+        }
+    }
+
+    fn script_text(self) -> &'static str {
+        match self {
+            SnippetTemplate::CobbDouglas => {
+                r#"# Cobb-Douglas Production & Isoquant-Isocost Tangency
+A = 2.0
+\alpha = 0.45
+\beta = 0.55
+price_x = 4.0
+price_y = 5.0
+I = 100.0
+Y_bar = 18.0
+
+# Isoquant K(L) for target output Y_bar and Isocost Line
+f(x) = (Y_bar / (A * x^\alpha))^(1 / \beta)
+g(x) = (I - price_x * x) / price_y
+mp_l(x) = A * \alpha * x^(\alpha - 1) * (10.0^\beta)"#
+            }
+            SnippetTemplate::BudgetConstraint => {
+                r#"# Consumer Constrained Utility Maximization (Marshallian Demand)
+A = 1.5
+\alpha = 0.50
+\beta = 0.50
+price_x = 4.0
+price_y = 5.0
+I = 120.0
+Y_bar = 16.4317
+
+# Indifference Curve f(x), Budget Line g(x), and Substituted Utility u(x)
+f(x) = (Y_bar / (A * x^\alpha))^(1 / \beta)
+g(x) = (I - price_x * x) / price_y
+u(x) = A * x^\alpha * g(x)^\beta"#
+            }
+            SnippetTemplate::IsLmMacro => {
+                r#"# Macroeconomics IS-LM Goods & Money Market Equilibrium (x = Output Y, y = Interest Rate r)
+c_0 = 2.5
+c_1 = 0.65
+I_0 = 3.2
+b = 22.0
+G = 4.0
+T = 3.0
+M_s = 12.0
+P = 1.0
+k = 0.55
+h = 18.0
+
+# IS Curve r(Y) and LM Curve r(Y)
+f(x) = (c_0 - c_1 * T + I_0 + G - (1.0 - c_1) * x) / b * 100.0
+g(x) = (k * x - M_s / P) / h * 100.0"#
+            }
+            SnippetTemplate::SolowGrowth => {
+                r#"# Solow-Swan Neoclassical Growth Model (x = Capital per Worker k)
+A = 2.2
+\alpha = 0.35
+s = 0.28
+\delta = 0.07
+n = 0.02
+
+# Actual Investment s*f(k), Break-Even Investment (delta + n)*k, Output y(k)
+f(x) = s * A * x^\alpha
+g(x) = (\delta + n) * x
+y(x) = A * x^\alpha"#
+            }
+            SnippetTemplate::MonopolistProfit => {
+                r#"# Imperfect Competition: Inverse Demand, Marginal Revenue, Marginal Cost (x = Quantity Q)
+a = 28.0
+b = 0.85
+c_0 = 12.0
+c_1 = 2.0
+c_2 = 0.25
+
+# Marginal Revenue f(x), Marginal Cost g(x), Demand, and Total Profit composing g(x)
+f(x) = a - 2.0 * b * x
+g(x) = c_1 + 2.0 * c_2 * x
+demand(x) = a - b * x
+profit(x) = demand(x) * x - (c_0 + c_1 * x + c_2 * x^2)"#
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
-struct ConsoleEntry {
-    command: String,
-    output: String,
+struct ConsoleLogEntry {
+    timestamp_tag: String,
+    source_line: String,
+    message: String,
     is_error: bool,
 }
 
-#[derive(Debug, Clone)]
-struct GameSolution {
-    pure_equilibria: Vec<(usize, usize, String)>,
-    mixed_p: Option<f64>,
-    mixed_q: Option<f64>,
-    expected_u1: Option<f64>,
-    expected_u2: Option<f64>,
-    summary_text: String,
-}
-
 pub struct EconCalcApp {
-    // Global IDE & Theme state
+    pub workspace: Workspace,
+
+    // UI state & navigation
     dark_mode: bool,
-    ui_scale: f32,
-    sidebar_open: bool,
-    sidebar_tab: SidebarTab,
-    viewport_tab: ViewportTab,
-    code_console_tab: CodeConsoleTab,
+    active_model: ActiveModelKind,
+    viewport_mode: ViewportMode,
+    bottom_tab: BottomEditorTab,
+    right_data_tab: RightDataTab,
+    selected_snippet: SnippetTemplate,
     report_format: ReportFormat,
 
-    // Generalized Model State
-    active_model: ActiveModel,
-    active_preset_name: String,
-    parameters: Vec<ModelParameter>,
+    // Editor buffer & logs
+    editor_script: String,
+    console_logs: Vec<ConsoleLogEntry>,
+    eval_counter: usize,
+    status_banner: String,
 
-    // New custom parameter builder fields
-    new_param_name: String,
-    new_param_symbol: String,
-    new_param_val: f64,
-    new_param_min: f64,
-    new_param_max: f64,
+    // Numerical evaluation & plot controls
+    domain_min: f64,
+    domain_max: f64,
+    probe_x: f64,
+    show_derivative_overlay: bool,
+    show_csv_ols_line: bool,
 
-    // Symbolic / CAS Editor & Calculus state
-    custom_expr: String,
-    secondary_expr: String,
-    cas_editor_buffer: String,
-    show_derivative_curve: bool,
-    simpson_intervals: usize,
-
-    // 2x2 Normal-Form Game Matrix state: [row][col] -> (Player 1, Player 2)
-    payoff_matrix: [[(f64, f64); 2]; 2],
-    row_labels: [String; 2],
-    col_labels: [String; 2],
-
-    // 3D Isometric Surface controls
+    // 3D Isometric surface controls
     yaw_deg: f32,
     pitch_deg: f32,
     surface_zoom: f32,
     surface_resolution: usize,
     surface_wireframe_only: bool,
-
-    // Evaluation log & status
-    console_history: Vec<ConsoleEntry>,
-    status_banner: String,
 }
 
 impl EconCalcApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = Vec2::new(8.0_f32, 6.0_f32);
-        style.visuals = egui::Visuals::dark();
-        cc.egui_ctx.set_style(style);
+        Self::apply_positron_theme(&cc.egui_ctx, true);
+
+        let workspace = Workspace::new_default();
+        let initial_script = SnippetTemplate::CobbDouglas.script_text().to_string();
 
         let mut app = Self {
+            workspace,
             dark_mode: true,
-            ui_scale: 1.0_f32,
-            sidebar_open: true,
-            sidebar_tab: SidebarTab::ModelExplorer,
-            viewport_tab: ViewportTab::Plot2D,
-            code_console_tab: CodeConsoleTab::CasMathInput,
+            active_model: ActiveModelKind::CobbDouglas,
+            viewport_mode: ViewportMode::Plot2D,
+            bottom_tab: BottomEditorTab::CommandEditor,
+            right_data_tab: RightDataTab::SimulationGrid,
+            selected_snippet: SnippetTemplate::CobbDouglas,
             report_format: ReportFormat::QuartoQmd,
-
-            active_model: ActiveModel::ConstrainedUtility,
-            active_preset_name: "Constrained Utility Maximization".to_string(),
-            parameters: Vec::new(),
-
-            new_param_name: "Tax Rate".to_string(),
-            new_param_symbol: "tau".to_string(),
-            new_param_val: 0.15,
-            new_param_min: 0.0,
-            new_param_max: 1.0,
-
-            custom_expr: "A * x^alpha - price_x * x".to_string(),
-            secondary_expr: "0.5 * x^1.4".to_string(),
-            cas_editor_buffer: String::new(),
-            show_derivative_curve: true,
-            simpson_intervals: 200,
-
-            payoff_matrix: [[(4.0, 4.0), (1.0, 6.0)], [(6.0, 1.0), (2.0, 2.0)]],
-            row_labels: ["Cooperate (U)".to_string(), "Defect (D)".to_string()],
-            col_labels: ["Cooperate (L)".to_string(), "Defect (R)".to_string()],
-
+            editor_script: initial_script,
+            console_logs: Vec::new(),
+            eval_counter: 0,
+            status_banner:
+                "Positron Symbolic Engine Ready — Native Windows 11 ARM64 (aarch64-pc-windows-msvc)"
+                    .to_string(),
+            domain_min: 0.25_f64,
+            domain_max: 25.0_f64,
+            probe_x: 11.25_f64,
+            show_derivative_overlay: false,
+            show_csv_ols_line: true,
             yaw_deg: 38.0_f32,
             pitch_deg: 28.0_f32,
             surface_zoom: 1.0_f32,
-            surface_resolution: 26,
+            surface_resolution: 28,
             surface_wireframe_only: false,
-
-            console_history: Vec::new(),
-            status_banner:
-                "Ready — Native Windows 11 ARM64 (aarch64-pc-windows-msvc) Computational IDE"
-                    .to_string(),
         };
 
-        app.load_model_workspace(
-            ActiveModel::ConstrainedUtility,
-            "Standard Marshallian Consumer",
-        );
-
-        app.console_history.push(ConsoleEntry {
-            command: ":init".to_string(),
-            output: "Initialized generalized parameter environment. Edit formulas in the CAS tab and click 'Run / Evaluate'.".to_string(),
-            is_error: false,
-        });
-
+        app.evaluate_editor_script();
         app
     }
 
-    /// Initializes the dynamic `Vec<ModelParameter>` and default CAS buffer for a chosen model preset.
-    fn load_model_workspace(&mut self, model: ActiveModel, preset_label: &str) {
-        self.active_model = model;
-        self.active_preset_name = preset_label.to_string();
-        self.parameters.clear();
+    fn apply_positron_theme(ctx: &egui::Context, dark: bool) {
+        let mut style = (*ctx.style()).clone();
+        style.spacing.item_spacing = Vec2::new(8.0_f32, 6.0_f32);
+        style.spacing.window_margin = Margin::same(8.0_f32);
+        style.spacing.button_padding = Vec2::new(10.0_f32, 5.0_f32);
 
-        match model {
-            ActiveModel::ConstrainedUtility => {
-                self.parameters.push(ModelParameter::new(
-                    "Utility Scale (TFP)",
-                    "A",
-                    2.0,
-                    0.2,
-                    10.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Preference Weight X",
-                    "alpha",
-                    0.45,
-                    0.05,
-                    0.95,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Preference Weight Y",
-                    "beta",
-                    0.55,
-                    0.05,
-                    0.95,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Price of Good X",
-                    "price_x",
-                    4.0,
-                    0.5,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Price of Good Y",
-                    "price_y",
-                    5.0,
-                    0.5,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Budget Income",
-                    "I",
-                    100.0,
-                    10.0,
-                    500.0,
-                ));
+        style.text_styles.insert(
+            TextStyle::Heading,
+            FontId::new(16.5_f32, FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            TextStyle::Body,
+            FontId::new(13.5_f32, FontFamily::Proportional),
+        );
+        style.text_styles.insert(
+            TextStyle::Monospace,
+            FontId::new(13.0_f32, FontFamily::Monospace),
+        );
+        style.text_styles.insert(
+            TextStyle::Button,
+            FontId::new(13.0_f32, FontFamily::Proportional),
+        );
 
-                self.custom_expr = "A * x^alpha * ((I - price_x * x) / price_y)^beta".to_string();
-                self.secondary_expr = "(I - price_x * x) / price_y".to_string();
-                self.cas_editor_buffer = format!(
-                    "# Constrained Utility CAS Script\n# Variables bound from Environment: A, alpha, beta, price_x, price_y, I, x\nf(x) = {}\ng(x) = {}\neval A * x^alpha at 8.0\ndiff {} at 8.0\nhessian",
-                    self.custom_expr, self.secondary_expr, self.custom_expr
-                );
-            }
-            ActiveModel::CobbDouglas => {
-                self.parameters.push(ModelParameter::new(
-                    "Total Factor Productivity",
-                    "A",
-                    2.2,
-                    0.2,
-                    10.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Labor Elasticity",
-                    "alpha",
-                    0.40,
-                    0.05,
-                    0.95,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Capital Elasticity",
-                    "beta",
-                    0.60,
-                    0.05,
-                    0.95,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Wage Rate (w)",
-                    "price_x",
-                    4.0,
-                    0.5,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Capital Rental (r)",
-                    "price_y",
-                    5.0,
-                    0.5,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Target Isoquant Output",
-                    "Y_bar",
-                    22.0,
-                    2.0,
-                    120.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Probe Labor Input",
-                    "L",
-                    10.0,
-                    0.5,
-                    40.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Probe Capital Input",
-                    "K",
-                    12.0,
-                    0.5,
-                    40.0,
-                ));
-
-                self.custom_expr = "(Y_bar / (A * x^alpha))^(1 / beta)".to_string();
-                self.secondary_expr = "A * x^alpha * K^beta".to_string();
-                self.cas_editor_buffer = format!(
-                    "# Cobb-Douglas Production & Isoquant CAS Script\nf(x) = {}\ng(x) = {}\neval A * L^alpha * K^beta at 10.0\ndiff A * x^alpha * K^beta at 10.0\nhessian",
-                    self.custom_expr, self.secondary_expr
-                );
-            }
-            ActiveModel::GameTheory => {
-                self.parameters.push(ModelParameter::new(
-                    "Row Belief (Col Plays L)",
-                    "q_probe",
-                    0.50,
-                    0.0,
-                    1.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Col Belief (Row Plays U)",
-                    "p_probe",
-                    0.50,
-                    0.0,
-                    1.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Discount Factor",
-                    "delta",
-                    0.90,
-                    0.0,
-                    0.99,
-                ));
-
-                let m = &self.payoff_matrix;
-                self.custom_expr = format!("x * ({:.2}) + (1 - x) * ({:.2})", m[0][0].0, m[0][1].0);
-                self.secondary_expr =
-                    format!("x * ({:.2}) + (1 - x) * ({:.2})", m[1][0].0, m[1][1].0);
-                self.cas_editor_buffer = format!(
-                    "# 2x2 Normal-Form Game Expected Payoff Analyzer\nf(x) = {}\ng(x) = {}\nroot ({}) - ({}) near 0.5",
-                    self.custom_expr,
-                    self.secondary_expr,
-                    self.custom_expr,
-                    self.secondary_expr
-                );
-            }
-            ActiveModel::CustomCAS => {
-                self.parameters.push(ModelParameter::new(
-                    "Scale Parameter A",
-                    "A",
-                    2.5,
-                    0.1,
-                    15.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Exponent Alpha",
-                    "alpha",
-                    0.65,
-                    0.05,
-                    2.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Exponent Beta",
-                    "beta",
-                    0.35,
-                    0.05,
-                    2.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Unit Cost / Price",
-                    "price_x",
-                    1.8,
-                    0.1,
-                    20.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Domain Min (x_min)",
-                    "x_min",
-                    0.1,
-                    -20.0,
-                    10.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Domain Max (x_max)",
-                    "x_max",
-                    25.0,
-                    2.0,
-                    100.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Evaluation Probe (x0)",
-                    "x0",
-                    6.0,
-                    0.1,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Integral Lower (a)",
-                    "int_a",
-                    1.0,
-                    0.1,
-                    25.0,
-                ));
-                self.parameters.push(ModelParameter::new(
-                    "Integral Upper (b)",
-                    "int_b",
-                    12.0,
-                    0.5,
-                    25.0,
-                ));
-
-                self.custom_expr = "A * x^alpha - price_x * x".to_string();
-                self.secondary_expr = "0.4 * x^1.35".to_string();
-                self.cas_editor_buffer = format!(
-                    "# Custom CAS Mathematical Workspace\n# Define primary f(x) and secondary g(x), or run calculus queries:\nf(x) = {}\ng(x) = {}\neval {} at 6.0\ndiff {} at 6.0\nint {} from 1.0 to 12.0\nroot {} near 8.0",
-                    self.custom_expr,
-                    self.secondary_expr,
-                    self.custom_expr,
-                    self.custom_expr,
-                    self.custom_expr,
-                    self.custom_expr
-                );
-            }
+        if dark {
+            let mut visuals = egui::Visuals::dark();
+            visuals.panel_fill = Color32::from_rgb(15, 23, 42);
+            visuals.window_fill = Color32::from_rgb(15, 23, 42);
+            visuals.extreme_bg_color = Color32::from_rgb(9, 14, 26);
+            visuals.faint_bg_color = Color32::from_rgb(23, 33, 56);
+            visuals.code_bg_color = Color32::from_rgb(11, 17, 32);
+            visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(20, 29, 49);
+            visuals.widgets.noninteractive.bg_stroke =
+                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 82));
+            visuals.widgets.inactive.bg_fill = Color32::from_rgb(30, 41, 69);
+            visuals.widgets.hovered.bg_fill = Color32::from_rgb(43, 61, 102);
+            visuals.widgets.active.bg_fill = Color32::from_rgb(37, 99, 235);
+            visuals.selection.bg_fill = Color32::from_rgb(30, 64, 175);
+            visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(147, 197, 253));
+            style.visuals = visuals;
+        } else {
+            style.visuals = egui::Visuals::light();
         }
+
+        ctx.set_style(style);
     }
 
-    /// Looks up a parameter value by symbol from the generalized parameter vector, returning `default` if absent.
-    fn get_param(&self, symbol: &str, default: f64) -> f64 {
-        for p in &self.parameters {
-            if p.symbol == symbol {
-                return p.value;
-            }
-        }
-        default
+    /// Strips LaTeX slashes (`\alpha` -> `alpha`) and normalizes braces (`{` -> `(`, `}` -> `)`)
+    /// so user expressions like `\alpha * x^{\beta}` evaluate cleanly in `meval`.
+    fn sanitize_for_meval(raw: &str) -> String {
+        let mut s = raw
+            .replace("\\cdot", "*")
+            .replace("\\times", "*")
+            .replace('{', "(")
+            .replace('}', ")");
+        s.retain(|ch| ch != '\\');
+        s.trim().to_string()
     }
 
-    /// Sets a parameter value by symbol if present.
-    fn set_param(&mut self, symbol: &str, value: f64) {
-        for p in &mut self.parameters {
-            if p.symbol == symbol {
-                p.value = value.clamp(p.min, p.max);
-                return;
+    /// Expands references to other workspace functions (e.g., `g(x)` inside `u(x) = A * x^alpha * g(x)^beta`)
+    /// so `meval` can evaluate composed functions cleanly.
+    fn expand_workspace_functions(&self, expr_str: &str) -> String {
+        let mut expanded = Self::sanitize_for_meval(expr_str);
+        for _ in 0..4 {
+            let mut changed = false;
+            for (sig, body) in &self.workspace.functions {
+                if expanded.contains(sig.as_str()) && sig != &expanded {
+                    let replacement = format!("({})", body);
+                    expanded = expanded.replace(sig.as_str(), &replacement);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
             }
         }
+        expanded
     }
 
-    /// Evaluates a single-variable expression `f(x)` with all active `ModelParameter` symbols dynamically bound into `meval::Context`.
-    fn eval_expr_at(&self, expr_str: &str, x_val: f64) -> Result<f64, String> {
+    /// Replaces word-bounded identifier occurrences in an expression string.
+    fn replace_identifier_token(expr: &str, ident: &str, replacement: &str) -> String {
+        if ident.is_empty() || !expr.contains(ident) {
+            return expr.to_string();
+        }
+        let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        let mut result = String::with_capacity(expr.len() + 16);
+        let mut rest = expr;
+        let mut prev_char: Option<char> = None;
+
+        while let Some(pos) = rest.find(ident) {
+            let prefix = &rest[..pos];
+            if let Some(last_ch) = prefix.chars().last() {
+                prev_char = Some(last_ch);
+            }
+            let valid_start = !prev_char.map(is_ident_char).unwrap_or(false);
+            let after_idx = pos + ident.len();
+            let after_str = &rest[after_idx..];
+            let next_char = after_str.chars().next();
+            let valid_end = !next_char.map(is_ident_char).unwrap_or(false);
+
+            result.push_str(prefix);
+            if valid_start && valid_end {
+                result.push_str(replacement);
+            } else {
+                result.push_str(ident);
+            }
+            prev_char = ident.chars().last();
+            rest = after_str;
+        }
+        result.push_str(rest);
+        result
+    }
+
+    /// Converts an internal `meval` expression into valid LaTeX math syntax for `\begin{align*}`.
+    fn format_latex_math(raw: &str) -> String {
+        let mut s = raw.to_string();
+        for (ident, latex_sym) in [
+            ("alpha", "\\alpha"),
+            ("beta", "\\beta"),
+            ("gamma", "\\gamma"),
+            ("delta", "\\delta"),
+            ("lambda", "\\lambda"),
+            ("sigma", "\\sigma"),
+            ("theta", "\\theta"),
+            ("rho", "\\rho"),
+            ("price_x", "P_x"),
+            ("price_y", "P_y"),
+            ("Y_bar", "\\bar{Y}"),
+            ("c_0", "c_0"),
+            ("c_1", "c_1"),
+            ("c_2", "c_2"),
+            ("I_0", "I_0"),
+            ("M_s", "M_s"),
+        ] {
+            s = Self::replace_identifier_token(&s, ident, latex_sym);
+        }
+        s.replace('*', " \\cdot ")
+    }
+
+    /// Substitutes numeric parameter values into an expression so PGFPlots (`\addplot`) compiles without unknown symbols.
+    fn substitute_params_for_tikz(&self, raw_expr: &str) -> String {
+        let mut s = self.expand_workspace_functions(raw_expr);
+        let mut pairs: Vec<(&String, &f64)> = self.workspace.parameters.iter().collect();
+        pairs.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
+        for (name, val) in pairs {
+            s = Self::replace_identifier_token(&s, name, &format!("({:.4})", val));
+        }
+        s
+    }
+
+    /// Formats symbolic identifiers with Unicode math symbols for the Symbolic Environment display.
+    fn format_symbolic_math(raw: &str) -> String {
+        raw.replace("\\alpha", "α")
+            .replace("alpha", "α")
+            .replace("\\beta", "β")
+            .replace("beta", "β")
+            .replace("\\gamma", "γ")
+            .replace("gamma", "γ")
+            .replace("\\delta", "δ")
+            .replace("delta", "δ")
+            .replace("\\lambda", "λ")
+            .replace("lambda", "λ")
+            .replace("\\sigma", "σ")
+            .replace("sigma", "σ")
+            .replace("\\theta", "θ")
+            .replace("theta", "θ")
+            .replace("\\rho", "ρ")
+            .replace("rho", "ρ")
+            .replace("price_x", "Pₓ")
+            .replace("price_y", "Pᵧ")
+            .replace("Y_bar", "Ȳ")
+    }
+
+    /// Parses and evaluates the multiline Command Editor script, splitting lines by `=`
+    /// into parameters (`name = value`) and functions (`f(x) = expression`).
+    pub fn evaluate_editor_script(&mut self) {
+        self.eval_counter += 1;
+        let run_id = self.eval_counter;
+
+        let lines: Vec<String> = self
+            .editor_script
+            .lines()
+            .map(|l| l.trim().to_string())
+            .collect();
+
+        let mut parsed_params = 0_usize;
+        let mut parsed_funcs = 0_usize;
+        let mut error_count = 0_usize;
+
+        for (idx, raw_line) in lines.iter().enumerate() {
+            let line_num = idx + 1;
+            if raw_line.is_empty() || raw_line.starts_with('#') || raw_line.starts_with("//") {
+                continue;
+            }
+
+            let Some((lhs_raw, rhs_raw)) = raw_line.split_once('=') else {
+                error_count += 1;
+                self.console_logs.push(ConsoleLogEntry {
+                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                    source_line: raw_line.clone(),
+                    message: "Syntax error: expected `=` assignment (`param = val` or `f(x) = expr`)."
+                        .to_string(),
+                    is_error: true,
+                });
+                continue;
+            };
+
+            let lhs_clean = Self::sanitize_for_meval(lhs_raw);
+            let rhs_clean = Self::sanitize_for_meval(rhs_raw);
+
+            if lhs_clean.is_empty() || rhs_clean.is_empty() {
+                error_count += 1;
+                self.console_logs.push(ConsoleLogEntry {
+                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                    source_line: raw_line.clone(),
+                    message: "Empty left-hand side or right-hand side in assignment.".to_string(),
+                    is_error: true,
+                });
+                continue;
+            }
+
+            let is_explicit_fn = lhs_clean.contains('(') && lhs_clean.ends_with(')');
+
+            if is_explicit_fn {
+                let sig = lhs_clean.replace(' ', "");
+                match self.eval_expression_str(&rhs_clean, self.probe_x, 10.0_f64) {
+                    Ok(sample_val) => {
+                        self.workspace.functions.insert(sig.clone(), rhs_clean.clone());
+                        parsed_funcs += 1;
+                        self.console_logs.push(ConsoleLogEntry {
+                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                            source_line: raw_line.clone(),
+                            message: format!(
+                                "Bound function `{}` = `{}` (probe @ x={:.2} -> {:.4})",
+                                sig, rhs_clean, self.probe_x, sample_val
+                            ),
+                            is_error: false,
+                        });
+                    }
+                    Err(err) => {
+                        error_count += 1;
+                        self.console_logs.push(ConsoleLogEntry {
+                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                            source_line: raw_line.clone(),
+                            message: format!("Function `{}` failed meval validation: {}", sig, err),
+                            is_error: true,
+                        });
+                    }
+                }
+            } else {
+                let param_name = lhs_clean.replace(' ', "");
+                match self.eval_parameter_rhs(&rhs_clean) {
+                    Ok(val) if val.is_finite() => {
+                        self.workspace.parameters.insert(param_name.clone(), val);
+                        parsed_params += 1;
+                        self.console_logs.push(ConsoleLogEntry {
+                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                            source_line: raw_line.clone(),
+                            message: format!("Set parameter `{}` = {:.6}", param_name, val),
+                            is_error: false,
+                        });
+                    }
+                    _ => {
+                        let promoted_sig = format!("{}(x)", param_name);
+                        match self.eval_expression_str(&rhs_clean, self.probe_x, 10.0_f64) {
+                            Ok(sample_val) => {
+                                self.workspace
+                                    .functions
+                                    .insert(promoted_sig.clone(), rhs_clean.clone());
+                                parsed_funcs += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: raw_line.clone(),
+                                    message: format!(
+                                        "Promoted `x`-dependent expression to `{}` = `{}` (probe -> {:.4})",
+                                        promoted_sig, rhs_clean, sample_val
+                                    ),
+                                    is_error: false,
+                                });
+                            }
+                            Err(err) => {
+                                error_count += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: raw_line.clone(),
+                                    message: format!(
+                                        "Could not evaluate `{}` as parameter or function: {}",
+                                        param_name, err
+                                    ),
+                                    is_error: true,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.status_banner = format!(
+            "Evaluated Run #{:02}: {} parameter(s), {} function(s) active, {} error(s)",
+            run_id,
+            parsed_params,
+            parsed_funcs,
+            error_count
+        );
+    }
+
+    fn eval_parameter_rhs(&self, expr_str: &str) -> Result<f64, String> {
         let mut ctx = meval::Context::new();
-        ctx.var("x", x_val);
-
-        // Provide fallback standard economic aliases before overriding with active model parameters
-        ctx.var("A", 2.0);
-        ctx.var("alpha", 0.5);
-        ctx.var("beta", 0.5);
-        ctx.var("price_x", 4.0);
-        ctx.var("price_y", 5.0);
-        ctx.var("I", 100.0);
-        ctx.var("Y_bar", 20.0);
-        ctx.var("K", 10.0);
-        ctx.var("L", 10.0);
-
-        for param in &self.parameters {
-            ctx.var(&param.symbol, param.value);
+        for (k, &v) in &self.workspace.parameters {
+            ctx.var(k.as_str(), v);
         }
-
         meval::eval_str_with_context(expr_str, &ctx).map_err(|e| e.to_string())
     }
 
-    /// Central finite difference first derivative f'(x).
+    /// Evaluates an arbitrary expression string with all workspace parameters, composed functions, and `(x, y)` injected.
+    pub fn eval_expression_str(&self, expr_str: &str, x_val: f64, y_val: f64) -> Result<f64, String> {
+        let mut ctx = meval::Context::new();
+        for (k, &v) in &self.workspace.parameters {
+            ctx.var(k.as_str(), v);
+        }
+        ctx.var("x", x_val);
+        ctx.var("y", y_val);
+        ctx.var("L", x_val);
+        ctx.var("K", y_val);
+        ctx.var("Q", x_val);
+        ctx.var("Y", x_val);
+
+        let expanded = self.expand_workspace_functions(expr_str);
+        meval::eval_str_with_context(&expanded, &ctx).map_err(|e| e.to_string())
+    }
+
+    /// Central finite-difference first derivative $f'(x)$.
     fn numerical_derivative(&self, expr_str: &str, x: f64) -> Result<f64, String> {
-        let h = 1e-5_f64.max(x.abs() * 1e-6);
-        let f_plus = self.eval_expr_at(expr_str, x + h)?;
-        let f_minus = self.eval_expr_at(expr_str, x - h)?;
-        Ok((f_plus - f_minus) / (2.0 * h))
+        let h = 1e-5_f64.max(x.abs() * 1e-6_f64);
+        let f_plus = self.eval_expression_str(expr_str, x + h, 10.0_f64)?;
+        let f_minus = self.eval_expression_str(expr_str, x - h, 10.0_f64)?;
+        Ok((f_plus - f_minus) / (2.0_f64 * h))
     }
 
-    /// Central finite difference second derivative f''(x).
+    /// Central finite-difference second derivative $f''(x)$.
     fn numerical_second_derivative(&self, expr_str: &str, x: f64) -> Result<f64, String> {
-        let h = 1e-4_f64.max(x.abs() * 1e-5);
-        let f_plus = self.eval_expr_at(expr_str, x + h)?;
-        let f_mid = self.eval_expr_at(expr_str, x)?;
-        let f_minus = self.eval_expr_at(expr_str, x - h)?;
-        Ok((f_plus - 2.0 * f_mid + f_minus) / (h * h))
+        let h = 1e-4_f64.max(x.abs() * 1e-5_f64);
+        let f_plus = self.eval_expression_str(expr_str, x + h, 10.0_f64)?;
+        let f_mid = self.eval_expression_str(expr_str, x, 10.0_f64)?;
+        let f_minus = self.eval_expression_str(expr_str, x - h, 10.0_f64)?;
+        Ok((f_plus - 2.0_f64 * f_mid + f_minus) / (h * h))
     }
 
-    /// Composite Simpson's Rule definite integral on [a, b].
+    /// Composite Simpson's Rule definite integral on $[a, b]$.
     fn composite_simpson(&self, expr_str: &str, a: f64, b: f64, n: usize) -> Result<f64, String> {
         let steps = if n % 2 == 0 { n.max(4) } else { n + 1 };
         let h = (b - a) / (steps as f64);
-        let mut sum = self.eval_expr_at(expr_str, a)? + self.eval_expr_at(expr_str, b)?;
+        let mut sum = self.eval_expression_str(expr_str, a, 10.0_f64)?
+            + self.eval_expression_str(expr_str, b, 10.0_f64)?;
 
         for i in 1..steps {
             let x = a + (i as f64) * h;
-            let fx = self.eval_expr_at(expr_str, x)?;
+            let fx = self.eval_expression_str(expr_str, x, 10.0_f64)?;
             if !fx.is_finite() {
-                return Err(format!("Non-finite integrand evaluation at x = {:.4}", x));
+                return Err(format!("Non-finite integrand at x = {:.4}", x));
             }
             if i % 2 == 1 {
-                sum += 4.0 * fx;
+                sum += 4.0_f64 * fx;
             } else {
-                sum += 2.0 * fx;
+                sum += 2.0_f64 * fx;
             }
         }
-        Ok(sum * h / 3.0)
+        Ok(sum * h / 3.0_f64)
     }
 
-    /// Hybrid Newton-Raphson root solver with bracketed bisection fallback.
-    fn solve_root(&self, expr_str: &str, initial_guess: f64) -> Result<f64, String> {
-        let mut x = initial_guess;
-        for _ in 0..60 {
-            let fx = self.eval_expr_at(expr_str, x)?;
-            if fx.abs() < 1e-9 {
-                return Ok(x);
-            }
-            let dfx = self.numerical_derivative(expr_str, x)?;
-            if dfx.abs() < 1e-12 || !dfx.is_finite() {
-                break;
-            }
-            let x_next = x - fx / dfx;
-            if !x_next.is_finite() {
-                break;
-            }
-            if (x_next - x).abs() < 1e-9 {
-                return Ok(x_next);
-            }
-            x = x_next;
-        }
+    /// Finds the intersection of the first two functions in `workspace.functions` on `[domain_min, domain_max]`.
+    fn find_primary_secondary_intersection(&self) -> Option<(f64, f64)> {
+        let mut iter = self.workspace.functions.values();
+        let f_expr = iter.next()?;
+        let g_expr = iter.next()?;
 
-        let dom_min = self.get_param("x_min", 0.05);
-        let dom_max = self.get_param("x_max", 25.0).max(dom_min + 1.0);
-        let samples = 200;
-        let step = (dom_max - dom_min) / (samples as f64);
-        let mut prev_x = dom_min;
-        let mut prev_f = self.eval_expr_at(expr_str, prev_x)?;
+        let samples = 240_usize;
+        let span = (self.domain_max - self.domain_min).max(1e-3_f64);
+        let step = span / (samples as f64);
+
+        let eval_diff = |x: f64| -> Option<f64> {
+            let fy = self.eval_expression_str(f_expr, x, 10.0_f64).ok()?;
+            let gy = self.eval_expression_str(g_expr, x, 10.0_f64).ok()?;
+            let d = fy - gy;
+            d.is_finite().then_some(d)
+        };
+
+        let mut prev_x = self.domain_min;
+        let mut prev_d = eval_diff(prev_x)?;
 
         for i in 1..=samples {
-            let curr_x = dom_min + (i as f64) * step;
-            if let Ok(curr_f) = self.eval_expr_at(expr_str, curr_x) {
-                if prev_f.is_finite() && curr_f.is_finite() && prev_f * curr_f <= 0.0 {
+            let curr_x = self.domain_min + (i as f64) * step;
+            if let Some(curr_d) = eval_diff(curr_x) {
+                if prev_d * curr_d <= 0.0_f64 {
                     let mut lo = prev_x;
                     let mut hi = curr_x;
-                    let mut f_lo = prev_f;
-                    for _ in 0..60 {
-                        let mid = 0.5 * (lo + hi);
-                        let f_mid = self.eval_expr_at(expr_str, mid)?;
-                        if f_mid.abs() < 1e-9 || (hi - lo).abs() < 1e-9 {
-                            return Ok(mid);
+                    let mut d_lo = prev_d;
+                    for _ in 0..50 {
+                        let mid = 0.5_f64 * (lo + hi);
+                        let Some(d_mid) = eval_diff(mid) else {
+                            break;
+                        };
+                        if d_mid.abs() < 1e-9_f64 || (hi - lo).abs() < 1e-9_f64 {
+                            let y_val = self.eval_expression_str(f_expr, mid, 10.0_f64).ok()?;
+                            return Some((mid, y_val));
                         }
-                        if f_lo * f_mid <= 0.0 {
+                        if d_lo * d_mid <= 0.0_f64 {
                             hi = mid;
                         } else {
                             lo = mid;
-                            f_lo = f_mid;
+                            d_lo = d_mid;
+                        }
+                    }
+                    let mid = 0.5_f64 * (lo + hi);
+                    if let Ok(y_val) = self.eval_expression_str(f_expr, mid, 10.0_f64) {
+                        if y_val.is_finite() {
+                            return Some((mid, y_val));
                         }
                     }
                 }
                 prev_x = curr_x;
-                prev_f = curr_f;
+                prev_d = curr_d;
             }
         }
-
-        Err("No root converged via Newton-Raphson or bracketed bisection on domain.".to_string())
+        None
     }
 
-    /// Computes analytical Marshallian demand and Lagrangian equilibrium from dynamic parameters.
-    fn solve_constrained_equilibrium(&self) -> (f64, f64, f64, f64) {
-        let tfp_a = self.get_param("A", 2.0).max(1e-6);
-        let alpha = self.get_param("alpha", 0.45).max(1e-6);
-        let beta = self.get_param("beta", 0.55).max(1e-6);
-        let sum_elast = (alpha + beta).max(1e-9);
-        let px = self.get_param("price_x", 4.0).max(1e-6);
-        let py = self.get_param("price_y", 5.0).max(1e-6);
-        let income = self.get_param("I", 100.0).max(1e-6);
-        let target_output = self.get_param("Y_bar", 20.0).max(1e-6);
-
-        match self.active_model {
-            ActiveModel::CobbDouglas => {
-                let ratio = (alpha / beta).max(1e-6) * (py / px);
-                let l_star = ((target_output / tfp_a) * ratio.powf(beta)).powf(1.0 / sum_elast);
-                let k_star = ((target_output / tfp_a) * ratio.powf(-alpha)).powf(1.0 / sum_elast);
-                let min_cost = px * l_star + py * k_star;
-                let mp_l =
-                    tfp_a * alpha * l_star.max(1e-6).powf(alpha - 1.0) * k_star.max(1e-6).powf(beta);
-                let lambda_mc = if mp_l.abs() > 1e-9 { px / mp_l } else { 0.0 };
-                (l_star, k_star, lambda_mc, min_cost)
+    /// Parses `workspace.csv_scratchpad` into `(x, y)` coordinate pairs for scatter plot overlay.
+    fn parse_csv_scratchpad_points(&self) -> Vec<[f64; 2]> {
+        let mut pts = Vec::new();
+        for raw_line in self.workspace.csv_scratchpad.lines() {
+            let trimmed = raw_line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
             }
-            _ => {
-                let x_star = (alpha / sum_elast) * (income / px);
-                let y_star = (beta / sum_elast) * (income / py);
-                let indirect_u =
-                    tfp_a * x_star.max(1e-9).powf(alpha) * y_star.max(1e-9).powf(beta);
-                let mu_x = tfp_a
-                    * alpha
-                    * x_star.max(1e-9).powf(alpha - 1.0)
-                    * y_star.max(1e-9).powf(beta);
-                let lambda_star = mu_x / px;
-                (x_star, y_star, lambda_star, indirect_u)
+            let parts: Vec<&str> = trimmed
+                .split(|c| c == ',' || c == ';' || c == '\t')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if parts.len() >= 2 {
+                if let (Ok(x), Ok(y)) = (parts[0].parse::<f64>(), parts[1].parse::<f64>()) {
+                    if x.is_finite() && y.is_finite() {
+                        pts.push([x, y]);
+                    }
+                }
             }
         }
+        pts
     }
 
-    /// Uses `nalgebra::Matrix2` to compute the Hessian matrix, determinant, and trace.
-    fn compute_cobb_douglas_hessian(&self, x: f64, y: f64) -> (Matrix2<f64>, f64, f64) {
-        let tfp_a = self.get_param("A", 2.0);
-        let alpha = self.get_param("alpha", 0.45);
-        let beta = self.get_param("beta", 0.55);
-        let x_safe = x.max(1e-4);
-        let y_safe = y.max(1e-4);
-        let f_val = tfp_a * x_safe.powf(alpha) * y_safe.powf(beta);
-        let f_xx = alpha * (alpha - 1.0) * f_val / (x_safe * x_safe);
-        let f_yy = beta * (beta - 1.0) * f_val / (y_safe * y_safe);
-        let f_xy = alpha * beta * f_val / (x_safe * y_safe);
+    /// Computes Ordinary Least Squares `(slope_beta1, intercept_beta0, r_squared)` on CSV points.
+    fn compute_csv_ols(&self, pts: &[[f64; 2]]) -> Option<(f64, f64, f64)> {
+        if pts.len() < 2 {
+            return None;
+        }
+        let n = pts.len() as f64;
+        let mean_x = pts.iter().map(|p| p[0]).sum::<f64>() / n;
+        let mean_y = pts.iter().map(|p| p[1]).sum::<f64>() / n;
+
+        let mut cov_xy = 0.0_f64;
+        let mut var_x = 0.0_f64;
+        let mut var_y = 0.0_f64;
+
+        for p in pts {
+            let dx = p[0] - mean_x;
+            let dy = p[1] - mean_y;
+            cov_xy += dx * dy;
+            var_x += dx * dx;
+            var_y += dy * dy;
+        }
+
+        if var_x.abs() < 1e-12_f64 {
+            return None;
+        }
+        let beta1 = cov_xy / var_x;
+        let beta0 = mean_y - beta1 * mean_x;
+        let r2 = if var_y.abs() > 1e-12_f64 {
+            (cov_xy * cov_xy) / (var_x * var_y)
+        } else {
+            1.0_f64
+        };
+        Some((beta1, beta0, r2))
+    }
+
+    /// Extracts structural parameters from `workspace.parameters` (with fallbacks) and solves
+    /// the analytical constrained optimization equilibrium `(x_star, y_star, lambda_star, indirect_u)`.
+    fn solve_structural_equilibrium(&self) -> (f64, f64, f64, f64) {
+        let tfp_a = self
+            .workspace
+            .parameters
+            .get("A")
+            .copied()
+            .unwrap_or(2.0_f64)
+            .max(1e-6_f64);
+        let alpha = self
+            .workspace
+            .parameters
+            .get("alpha")
+            .copied()
+            .unwrap_or(0.45_f64)
+            .max(1e-6_f64);
+        let beta = self
+            .workspace
+            .parameters
+            .get("beta")
+            .copied()
+            .unwrap_or(0.55_f64)
+            .max(1e-6_f64);
+        let px = self
+            .workspace
+            .parameters
+            .get("price_x")
+            .copied()
+            .unwrap_or(4.0_f64)
+            .max(1e-6_f64);
+        let py = self
+            .workspace
+            .parameters
+            .get("price_y")
+            .copied()
+            .unwrap_or(5.0_f64)
+            .max(1e-6_f64);
+        let income = self
+            .workspace
+            .parameters
+            .get("I")
+            .copied()
+            .unwrap_or(100.0_f64)
+            .max(1e-6_f64);
+
+        if let Some((ix, iy)) = self.find_primary_secondary_intersection() {
+            let indirect_u = tfp_a * ix.max(1e-6_f64).powf(alpha) * iy.max(1e-6_f64).powf(beta);
+            let mu_x =
+                tfp_a * alpha * ix.max(1e-6_f64).powf(alpha - 1.0_f64) * iy.max(1e-6_f64).powf(beta);
+            let lambda_star = mu_x / px;
+            return (ix, iy, lambda_star, indirect_u);
+        }
+
+        let sum_elast = (alpha + beta).max(1e-9_f64);
+        let x_star = (alpha / sum_elast) * (income / px);
+        let y_star = (beta / sum_elast) * (income / py);
+        let indirect_u =
+            tfp_a * x_star.max(1e-9_f64).powf(alpha) * y_star.max(1e-9_f64).powf(beta);
+        let mu_x = tfp_a
+            * alpha
+            * x_star.max(1e-9_f64).powf(alpha - 1.0_f64)
+            * y_star.max(1e-9_f64).powf(beta);
+        let lambda_star = mu_x / px;
+        (x_star, y_star, lambda_star, indirect_u)
+    }
+
+    /// Computes second-order Hessian matrix diagnostics via `nalgebra::Matrix2` and `Vector2`.
+    fn compute_hessian_diagnostics(&self, x: f64, y: f64) -> (Matrix2<f64>, Vector2<f64>, f64, f64) {
+        let tfp_a = self
+            .workspace
+            .parameters
+            .get("A")
+            .copied()
+            .unwrap_or(2.0_f64);
+        let alpha = self
+            .workspace
+            .parameters
+            .get("alpha")
+            .copied()
+            .unwrap_or(0.45_f64);
+        let beta = self
+            .workspace
+            .parameters
+            .get("beta")
+            .copied()
+            .unwrap_or(0.55_f64);
+
+        let xs = x.max(1e-4_f64);
+        let ys = y.max(1e-4_f64);
+        let f_val = tfp_a * xs.powf(alpha) * ys.powf(beta);
+
+        let grad = Vector2::new(alpha * f_val / xs, beta * f_val / ys);
+        let f_xx = alpha * (alpha - 1.0_f64) * f_val / (xs * xs);
+        let f_yy = beta * (beta - 1.0_f64) * f_val / (ys * ys);
+        let f_xy = alpha * beta * f_val / (xs * ys);
 
         let hessian = Matrix2::new(f_xx, f_xy, f_xy, f_yy);
-        let det = hessian.determinant();
-        let trace = hessian.trace();
-        (hessian, det, trace)
+        (hessian, grad, hessian.determinant(), hessian.trace())
     }
 
-    /// Solves the 2x2 Normal-Form Game for Pure Strategy and Mixed Strategy Nash Equilibria.
-    fn solve_game_2x2(&self) -> GameSolution {
-        let m = &self.payoff_matrix;
-        let mut pure_equilibria = Vec::new();
-        let eps = 1e-9;
-
-        for (r, row_label) in self.row_labels.iter().enumerate() {
-            for (c, col_label) in self.col_labels.iter().enumerate() {
-                let u1 = m[r][c].0;
-                let u1_alt = m[1 - r][c].0;
-                let u2 = m[r][c].1;
-                let u2_alt = m[r][1 - c].1;
-
-                if u1 + eps >= u1_alt && u2 + eps >= u2_alt {
-                    pure_equilibria.push((
-                        r,
-                        c,
-                        format!(
-                            "({}, {}) -> Payoffs ({:.2}, {:.2})",
-                            row_label, col_label, u1, u2
-                        ),
-                    ));
-                }
-            }
-        }
-
-        let p1_vec = Vector2::new(m[0][0].0 - m[1][0].0, m[1][1].0 - m[0][1].0);
-        let p2_vec = Vector2::new(m[0][0].1 - m[0][1].1, m[1][1].1 - m[1][0].1);
-
-        let denom_q = p1_vec.x + p1_vec.y;
-        let denom_p = p2_vec.x + p2_vec.y;
-
-        let mixed_q = if denom_q.abs() > 1e-9 {
-            let q = p1_vec.y / denom_q;
-            if (0.0..=1.0).contains(&q) {
-                Some(q)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let mixed_p = if denom_p.abs() > 1e-9 {
-            let p = p2_vec.y / denom_p;
-            if (0.0..=1.0).contains(&p) {
-                Some(p)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let (expected_u1, expected_u2) = match (mixed_p, mixed_q) {
-            (Some(p), Some(q)) => {
-                let eu1 = p * q * m[0][0].0
-                    + p * (1.0 - q) * m[0][1].0
-                    + (1.0 - p) * q * m[1][0].0
-                    + (1.0 - p) * (1.0 - q) * m[1][1].0;
-                let eu2 = p * q * m[0][0].1
-                    + p * (1.0 - q) * m[0][1].1
-                    + (1.0 - p) * q * m[1][0].1
-                    + (1.0 - p) * (1.0 - q) * m[1][1].1;
-                (Some(eu1), Some(eu2))
-            }
-            _ => (None, None),
-        };
-
-        let psne_str = if pure_equilibria.is_empty() {
-            "None (No pure strategy saddle point)".to_string()
-        } else {
-            pure_equilibria
-                .iter()
-                .map(|(_, _, label)| label.clone())
-                .collect::<Vec<_>>()
-                .join("; ")
-        };
-
-        let msne_str = match (mixed_p, mixed_q, expected_u1, expected_u2) {
-            (Some(p), Some(q), Some(eu1), Some(eu2)) => format!(
-                "p* (Row U) = {:.4}, q* (Col L) = {:.4} | E[U1] = {:.4}, E[U2] = {:.4}",
-                p, q, eu1, eu2
-            ),
-            _ => "No interior Mixed Strategy Nash Equilibrium in (0, 1)".to_string(),
-        };
-
-        let summary_text = format!("PSNE: {}\nMSNE: {}", psne_str, msne_str);
-
-        GameSolution {
-            pure_equilibria,
-            mixed_p,
-            mixed_q,
-            expected_u1,
-            expected_u2,
-            summary_text,
-        }
-    }
-
-    /// Generates the numerical simulation table for the RStudio-style dataframe viewer and CSV exporter.
+    /// Dynamically evaluates the primary and secondary workspace functions into a `rows_count`-row `GridRow` vector.
     fn build_simulation_grid(&self, rows_count: usize) -> Vec<GridRow> {
-        let mut grid = Vec::with_capacity(rows_count);
-        let (x_star, y_star, _, indirect_u) = self.solve_constrained_equilibrium();
-        let tfp_a = self.get_param("A", 2.0).max(1e-6);
-        let alpha = self.get_param("alpha", 0.45).max(1e-6);
-        let beta = self.get_param("beta", 0.55).max(1e-6);
-        let px = self.get_param("price_x", 4.0).max(1e-6);
-        let py = self.get_param("price_y", 5.0).max(1e-6);
-        let income = self.get_param("I", 100.0).max(1e-6);
-        let target_output = self.get_param("Y_bar", 20.0).max(1e-6);
+        let mut rows = Vec::with_capacity(rows_count);
+        let span = (self.domain_max - self.domain_min).max(1e-3_f64);
 
-        match self.active_model {
-            ActiveModel::CustomCAS => {
-                let dom_min = self.get_param("x_min", 0.1);
-                let dom_max = self.get_param("x_max", 25.0).max(dom_min + 0.5);
-                let span = (dom_max - dom_min).max(1e-3);
-                for i in 0..rows_count {
-                    let x = dom_min + span * (i as f64) / ((rows_count - 1).max(1) as f64);
-                    let y1 = self.eval_expr_at(&self.custom_expr, x).unwrap_or(f64::NAN);
-                    let y2 = self
-                        .eval_expr_at(&self.secondary_expr, x)
-                        .unwrap_or(f64::NAN);
-                    let dy = self
-                        .numerical_derivative(&self.custom_expr, x)
-                        .unwrap_or(f64::NAN);
-                    grid.push(GridRow {
-                        index: i + 1,
-                        x,
-                        primary_y: y1,
-                        secondary_y: y2,
-                        marginal_or_slope: dy,
-                    });
-                }
-            }
-            ActiveModel::CobbDouglas => {
-                let max_l = (x_star * 2.4).max(15.0);
-                let min_cost = px * x_star + py * y_star;
+        let mut fn_iter = self.workspace.functions.values();
+        let primary_expr = fn_iter.next().cloned().unwrap_or_else(|| "x".to_string());
+        let secondary_expr = fn_iter.next().cloned().unwrap_or_else(|| "0.0".to_string());
 
-                for i in 0..rows_count {
-                    let l = 0.25 + (max_l - 0.25) * (i as f64) / ((rows_count - 1).max(1) as f64);
-                    let k_isoquant = (target_output / (tfp_a * l.powf(alpha)))
-                        .max(0.0)
-                        .powf(1.0 / beta);
-                    let k_isocost = ((min_cost - px * l) / py).max(0.0);
-                    let mrts = (alpha / beta) * (k_isoquant / l);
-                    grid.push(GridRow {
-                        index: i + 1,
-                        x: l,
-                        primary_y: k_isoquant,
-                        secondary_y: k_isocost,
-                        marginal_or_slope: -mrts,
-                    });
-                }
-            }
-            ActiveModel::ConstrainedUtility => {
-                let max_x = (income / px) * 1.15;
-                let u_bar = indirect_u.max(1e-6);
+        for i in 0..rows_count {
+            let x = self.domain_min
+                + span * (i as f64) / ((rows_count.saturating_sub(1)).max(1) as f64);
+            let primary_y = self
+                .eval_expression_str(&primary_expr, x, 10.0_f64)
+                .unwrap_or(f64::NAN);
+            let secondary_y = self
+                .eval_expression_str(&secondary_expr, x, 10.0_f64)
+                .unwrap_or(f64::NAN);
+            let marginal_or_slope = self
+                .numerical_derivative(&primary_expr, x)
+                .unwrap_or(f64::NAN);
 
-                for i in 0..rows_count {
-                    let x = 0.15 + (max_x - 0.15) * (i as f64) / ((rows_count - 1).max(1) as f64);
-                    let y_indiff = (u_bar / (tfp_a * x.powf(alpha)))
-                        .max(0.0)
-                        .powf(1.0 / beta);
-                    let y_budget = ((income - px * x) / py).max(0.0);
-                    let mrs = (alpha / beta) * (y_indiff / x);
-                    grid.push(GridRow {
-                        index: i + 1,
-                        x,
-                        primary_y: y_indiff,
-                        secondary_y: y_budget,
-                        marginal_or_slope: -mrs,
-                    });
-                }
-            }
-            ActiveModel::GameTheory => {
-                let m = &self.payoff_matrix;
-                for i in 0..rows_count {
-                    let q = (i as f64) / ((rows_count - 1).max(1) as f64);
-                    let eu1_up = q * m[0][0].0 + (1.0 - q) * m[0][1].0;
-                    let eu1_down = q * m[1][0].0 + (1.0 - q) * m[1][1].0;
-                    grid.push(GridRow {
-                        index: i + 1,
-                        x: q,
-                        primary_y: eu1_up,
-                        secondary_y: eu1_down,
-                        marginal_or_slope: eu1_up - eu1_down,
-                    });
-                }
-            }
+            rows.push(GridRow {
+                index: i + 1,
+                x,
+                primary_y,
+                secondary_y,
+                marginal_or_slope,
+            });
         }
-
-        grid
+        rows
     }
 
-    /// Generates publication-grade LaTeX & TikZ derivation for the LaTeX Output tab and exporter.
-    fn generate_latex_and_tikz(&self) -> String {
-        let (x_star, y_star, lambda_star, obj_star) = self.solve_constrained_equilibrium();
-        let tfp_a = self.get_param("A", 2.0);
-        let alpha = self.get_param("alpha", 0.45);
-        let beta = self.get_param("beta", 0.55);
-        let px = self.get_param("price_x", 4.0);
-        let py = self.get_param("price_y", 5.0);
-        let income = self.get_param("I", 100.0);
-        let target_output = self.get_param("Y_bar", 20.0);
+    /// Generates auto-derived LaTeX mathematical output bundled with the user's Markdown Notes.
+    fn generate_latex_derivation(&self) -> String {
+        let (x_star, y_star, lambda_star, indirect_u) = self.solve_structural_equilibrium();
+        let (hessian, grad, det_h, trace_h) = self.compute_hessian_diagnostics(x_star, y_star);
 
-        match self.active_model {
-            ActiveModel::CustomCAS => {
-                let x0 = self.get_param("x0", 6.0);
-                let int_a = self.get_param("int_a", 1.0);
-                let int_b = self.get_param("int_b", 12.0);
-                let fx = self.eval_expr_at(&self.custom_expr, x0).unwrap_or(0.0);
-                let dfx = self
-                    .numerical_derivative(&self.custom_expr, x0)
-                    .unwrap_or(0.0);
-                let d2fx = self
-                    .numerical_second_derivative(&self.custom_expr, x0)
-                    .unwrap_or(0.0);
-                let integral = self
-                    .composite_simpson(&self.custom_expr, int_a, int_b, self.simpson_intervals)
-                    .unwrap_or(0.0);
+        let mut fn_iter = self.workspace.functions.iter();
+        let (primary_sig, primary_expr) = fn_iter
+            .next()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .unwrap_or(("f(x)", "x"));
+        let (secondary_sig, secondary_expr) = fn_iter
+            .next()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .unwrap_or(("g(x)", "0"));
 
-                format!(
-                    r#"% Generated by econ-calc (Windows 11 ARM64)
+        let fx_probe = self
+            .eval_expression_str(primary_expr, self.probe_x, y_star)
+            .unwrap_or(0.0_f64);
+        let dfx_probe = self
+            .numerical_derivative(primary_expr, self.probe_x)
+            .unwrap_or(0.0_f64);
+        let d2fx_probe = self
+            .numerical_second_derivative(primary_expr, self.probe_x)
+            .unwrap_or(0.0_f64);
+        let definite_int = self
+            .composite_simpson(primary_expr, self.domain_min, self.domain_max, 200)
+            .unwrap_or(0.0_f64);
+
+        let mut param_lines = String::new();
+        for (k, v) in &self.workspace.parameters {
+            param_lines.push_str(&format!(
+                "  {} &= {:.4} \\\\\n",
+                Self::format_latex_math(k),
+                v
+            ));
+        }
+
+        let mut func_lines = String::new();
+        for (sig, expr) in &self.workspace.functions {
+            func_lines.push_str(&format!(
+                "  {} &= {} \\\\\n",
+                Self::format_latex_math(sig),
+                Self::format_latex_math(expr)
+            ));
+        }
+
+        let tikz_primary = self.substitute_params_for_tikz(primary_expr);
+        let tikz_secondary = self.substitute_params_for_tikz(secondary_expr);
+
+        format!(
+            r#"% Auto-Generated Symbolic Derivation — econ-calc (Windows 11 ARM64)
 \begin{{align*}}
-f(x) &= \text{{{expr}}} \\
-g(x) &= \text{{{gexpr}}} \\
-f({x0:.4}) &= {fx:.6}, \quad f'({x0:.4}) = {dfx:.6}, \quad f''({x0:.4}) = {d2fx:.6} \\
-\int_{{{a:.2}}}^{{{b:.2}}} f(x)\,dx &\approx {integral:.6} \quad (\text{{Composite Simpson }} N={n})
-\end{{align*}}
-"#,
-                    expr = self.custom_expr,
-                    gexpr = self.secondary_expr,
-                    x0 = x0,
-                    fx = fx,
-                    dfx = dfx,
-                    d2fx = d2fx,
-                    a = int_a,
-                    b = int_b,
-                    integral = integral,
-                    n = self.simpson_intervals
-                )
-            }
-            ActiveModel::CobbDouglas => {
-                let rts = alpha + beta;
-                format!(
-                    r#"% Cobb-Douglas Production & Isoquant Cost Minimization (econ-calc)
-\begin{{align*}}
-Y(L, K) &= {a:.3} L^{{{alpha:.3}}} K^{{{beta:.3}}}, \quad \text{{Returns to Scale: }} \alpha + \beta = {rts:.3} \\
-\text{{MRTS}}_{{L,K}} &= \frac{{MP_L}}{{MP_K}} = \frac{{\alpha K}}{{\beta L}} = \frac{{w}}{{r}} = \frac{{{px:.2}}}{{{py:.2}}} \\
-\left(L^*, K^*\right) &= \left({x_star:.4}, {y_star:.4}\right), \quad C^*(\bar{{Y}} = {ybar:.2}) = {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
+% --- Active Symbolic Functions ---
+{func_lines}% --- Structural Parameters ---
+{param_lines}% --- Numerical Calculus & Tangency Diagnostics ---
+  {primary_sig}\big|_{{x={probe:.3}}} &= {fx_probe:.6}, \quad \frac{{d}}{{dx}}{primary_sig}\big|_{{x={probe:.3}}} = {dfx_probe:.6}, \quad \frac{{d^2}}{{dx^2}}{primary_sig}\big|_{{x={probe:.3}}} = {d2fx_probe:.6} \\
+  \int_{{{dmin:.2}}}^{{{dmax:.2}}} {primary_sig}\,dx &\approx {definite_int:.6} \quad (\text{{Composite Simpson }} N=200) \\
+  \left(x^*, y^*\right) &= \left({x_star:.5}, {y_star:.5}\right), \quad \lambda^* = {lambda_star:.5}, \quad V^* = {indirect_u:.5} \\
+  \nabla F(x^*, y^*) &= \begin{{bmatrix}} {gx:.5} \\ {gy:.5} \end{{bmatrix}}, \quad
+  \mathbf{{H}}(x^*, y^*) = \begin{{bmatrix}} {h00:.5} & {h01:.5} \\ {h10:.5} & {h11:.5} \end{{bmatrix}}, \quad
+  \det(\mathbf{{H}}) = {det_h:.5e}, \quad \operatorname{{tr}}(\mathbf{{H}}) = {trace_h:.5}
 \end{{align*}}
 
+% --- TikZ / pgfplots Reproducible Figure ---
 \begin{{tikzpicture}}
 \begin{{axis}}[
-    title={{Cobb-Douglas Isoquant \& Isocost Tangency ($\bar{{Y}} = {ybar:.2}$)}},
-    xlabel={{Labor ($L$)}},
-    ylabel={{Capital ($K$)}},
-    domain=0.5:{xmax:.2},
-    samples=100,
-    ymin=0, ymax={ymax:.2},
+    title={{Desmos-Positron Economic Equilibrium ({primary_sig} vs {secondary_sig})}},
+    xlabel={{$x$}},
+    ylabel={{$y$}},
+    domain={dmin:.2}:{dmax:.2},
+    samples=120,
     legend pos=north east,
     grid=major
 ]
-\addplot[blue, thick] {{ ({ybar:.4} / ({a:.4} * x^({alpha:.4})))^(1 / {beta:.4}) }};
-\addlegendentry{{Isoquant $\bar{{Y}} = {ybar:.2}$}}
-\addplot[red, dashed, thick] {{ ({obj_star:.4} - {px:.4}*x) / {py:.4} }};
-\addlegendentry{{Isocost $C^* = {obj_star:.2}$}}
-\addplot[only marks, mark=*, mark size=2.8pt, green!60!black] coordinates {{({x_star:.4}, {y_star:.4})}};
-\addlegendentry{{Cost-Minimizing Bundle $(L^*, K^*)$}}
-\end{{axis}}
-\end{{tikzpicture}}
-"#,
-                    a = tfp_a,
-                    alpha = alpha,
-                    beta = beta,
-                    rts = rts,
-                    px = px,
-                    py = py,
-                    x_star = x_star,
-                    y_star = y_star,
-                    ybar = target_output,
-                    obj_star = obj_star,
-                    lambda_star = lambda_star,
-                    xmax = (x_star * 2.2).max(10.0),
-                    ymax = (y_star * 2.2).max(10.0)
-                )
-            }
-            ActiveModel::ConstrainedUtility => {
-                format!(
-                    r#"% Constrained Utility Maximization Lagrangian (econ-calc)
-\begin{{align*}}
-\mathcal{{L}}(x, y, \lambda) &= {a:.3} x^{{{alpha:.3}}} y^{{{beta:.3}}} + \lambda \left( {income:.2} - {px:.2}x - {py:.2}y \right) \\
-\frac{{\partial \mathcal{{L}}}}{{\partial x}} &= {a:.3} ({alpha:.3}) x^{{{alpha_m1:.3}}} y^{{{beta:.3}}} - \lambda ({px:.2}) = 0 \\
-\frac{{\partial \mathcal{{L}}}}{{\partial y}} &= {a:.3} ({beta:.3}) x^{{{alpha:.3}}} y^{{{beta_m1:.3}}} - \lambda ({py:.2}) = 0 \\
-\text{{MRS}}_{{x,y}} &= \frac{{\alpha y}}{{\beta x}} = \frac{{P_x}}{{P_y}} \implies x^* = \frac{{\alpha}}{{\alpha+\beta}}\frac{{I}}{{P_x}} = {x_star:.4}, \quad y^* = \frac{{\beta}}{{\alpha+\beta}}\frac{{I}}{{P_y}} = {y_star:.4} \\
-V(P_x, P_y, I) &= {obj_star:.4}, \quad \lambda^* = {lambda_star:.4}
-\end{{align*}}
-
-\begin{{tikzpicture}}
-\begin{{axis}}[
-    title={{Marshallian Demand \& Indifference Tangency}},
-    xlabel={{Good $x$}},
-    ylabel={{Good $y$}},
-    domain=0.5:{xmax:.2},
-    samples=100,
-    ymin=0, ymax={ymax:.2},
-    legend pos=north east,
-    grid=major
-]
-\addplot[blue, thick] {{ ({obj_star:.4} / ({a:.4} * x^({alpha:.4})))^(1 / {beta:.4}) }};
-\addlegendentry{{Indifference Curve $U^* = {obj_star:.2}$}}
-\addplot[red, dashed, thick] {{ ({income:.4} - {px:.4}*x) / {py:.4} }};
-\addlegendentry{{Budget Line $P_x x + P_y y = {income:.1}$}}
-\addplot[only marks, mark=*, mark size=2.8pt, green!60!black] coordinates {{({x_star:.4}, {y_star:.4})}};
+\addplot[blue, thick] {{{tikz_primary}}};
+\addlegendentry{{${primary_sig}$}}
+\addplot[red, dashed, thick] {{{tikz_secondary}}};
+\addlegendentry{{${secondary_sig}$}}
+\addplot[only marks, mark=*, mark size=3pt, green!60!black] coordinates {{({x_star:.4}, {y_star:.4})}};
 \addlegendentry{{Equilibrium $(x^*, y^*)$}}
 \end{{axis}}
 \end{{tikzpicture}}
+
+## Theoretical Interpretation & User Markdown Notes
+
+{markdown_notes}
 "#,
-                    a = tfp_a,
-                    alpha = alpha,
-                    beta = beta,
-                    alpha_m1 = alpha - 1.0,
-                    beta_m1 = beta - 1.0,
-                    income = income,
-                    px = px,
-                    py = py,
-                    x_star = x_star,
-                    y_star = y_star,
-                    obj_star = obj_star,
-                    lambda_star = lambda_star,
-                    xmax = (income / px.max(0.1)) * 1.1,
-                    ymax = (income / py.max(0.1)) * 1.2
-                )
+            func_lines = func_lines,
+            param_lines = param_lines,
+            primary_sig = primary_sig,
+            secondary_sig = secondary_sig,
+            tikz_primary = tikz_primary,
+            tikz_secondary = tikz_secondary,
+            probe = self.probe_x,
+            fx_probe = fx_probe,
+            dfx_probe = dfx_probe,
+            d2fx_probe = d2fx_probe,
+            dmin = self.domain_min,
+            dmax = self.domain_max,
+            definite_int = definite_int,
+            x_star = x_star,
+            y_star = y_star,
+            lambda_star = lambda_star,
+            indirect_u = indirect_u,
+            gx = grad.x,
+            gy = grad.y,
+            h00 = hessian[(0, 0)],
+            h01 = hessian[(0, 1)],
+            h10 = hessian[(1, 0)],
+            h11 = hessian[(1, 1)],
+            det_h = det_h,
+            trace_h = trace_h,
+            markdown_notes = if self.workspace.markdown_notes.trim().is_empty() {
+                "_No custom Markdown notes entered._"
+            } else {
+                self.workspace.markdown_notes.trim()
             }
-            ActiveModel::GameTheory => {
-                let sol = self.solve_game_2x2();
-                let m = &self.payoff_matrix;
-                format!(
-                    r#"% 2x2 Normal-Form Game Payoff Matrix & Nash Equilibria (econ-calc)
-\begin{{table}}[htbp]
-\centering
-\begin{{tabular}}{{l|cc}}
-\toprule
-\textbf{{Player 1 \textbackslash\ Player 2}} & \textbf{{{col0}}} & \textbf{{{col1}}} \\
-\midrule
-\textbf{{{row0}}} & $({u00_1:.2}, {u00_2:.2})$ & $({u01_1:.2}, {u01_2:.2})$ \\
-\textbf{{{row1}}} & $({u10_1:.2}, {u10_2:.2})$ & $({u11_1:.2}, {u11_2:.2})$ \\
-\bottomrule
-\end{{tabular}}
-\caption{{{summary}}}
-\end{{table}}
-"#,
-                    col0 = self.col_labels[0],
-                    col1 = self.col_labels[1],
-                    row0 = self.row_labels[0],
-                    row1 = self.row_labels[1],
-                    u00_1 = m[0][0].0,
-                    u00_2 = m[0][0].1,
-                    u01_1 = m[0][1].0,
-                    u01_2 = m[0][1].1,
-                    u10_1 = m[1][0].0,
-                    u10_2 = m[1][0].1,
-                    u11_1 = m[1][1].0,
-                    u11_2 = m[1][1].1,
-                    summary = sol.summary_text.replace('\n', " | ")
-                )
-            }
-        }
+        )
     }
 
-    /// Generates a live preview of `model_analysis.R` for the R Script Preview tab.
+    /// Generates the live `model_analysis.R` preview script reflecting the active `Workspace`.
     fn generate_r_script_preview(&self) -> String {
-        let (x_star, y_star, lambda_star, indirect_utility) = self.solve_constrained_equilibrium();
-        let tfp_a = self.get_param("A", 2.0);
-        let alpha = self.get_param("alpha", 0.45);
-        let beta = self.get_param("beta", 0.55);
-        let price_x = self.get_param("price_x", 4.0);
-        let price_y = self.get_param("price_y", 5.0);
-        let income = self.get_param("I", 100.0);
-        let target_output = self.get_param("Y_bar", 20.0);
+        let (x_star, y_star, lambda_star, indirect_u) = self.solve_structural_equilibrium();
+        let tfp_a = self.workspace.parameters.get("A").copied().unwrap_or(2.0_f64);
+        let alpha = self
+            .workspace
+            .parameters
+            .get("alpha")
+            .copied()
+            .unwrap_or(0.45_f64);
+        let beta = self
+            .workspace
+            .parameters
+            .get("beta")
+            .copied()
+            .unwrap_or(0.55_f64);
+        let px = self
+            .workspace
+            .parameters
+            .get("price_x")
+            .copied()
+            .unwrap_or(4.0_f64);
+        let py = self
+            .workspace
+            .parameters
+            .get("price_y")
+            .copied()
+            .unwrap_or(5.0_f64);
+        let income = self
+            .workspace
+            .parameters
+            .get("I")
+            .copied()
+            .unwrap_or(100.0_f64);
+        let target_output = self
+            .workspace
+            .parameters
+            .get("Y_bar")
+            .copied()
+            .unwrap_or(18.0_f64);
+
+        let mut custom_param_list = Vec::new();
+        for (k, v) in &self.workspace.parameters {
+            custom_param_list.push(format!("  {} = {:.6}", k, v));
+        }
+        let tibble_body = if custom_param_list.is_empty() {
+            "  x_star = 0.0".to_string()
+        } else {
+            custom_param_list.join(",\n")
+        };
 
         format!(
-            r##"# ==============================================================================
+            r#"# ==============================================================================
 # econ-calc Reproducible Analysis Script for Posit Positron IDE
 # Active Model: {model_title}
-# Preset: {preset}
 # Target Architecture: Windows 11 ARM64 (aarch64-pc-windows-msvc)
 # ==============================================================================
 
@@ -1025,11 +1189,12 @@ suppressPackageStartupMessages({{
   library(tidyverse)
 }})
 
-# Load exported numerical simulation grid
+# Load exported numerical simulation grid (50 rows)
 sim_data <- read_csv("simulation_data.csv", show_col_types = FALSE)
 
-# Active structural parameters exported from econ-calc Environment
-params <- tibble(
+# Dynamic Symbolic Workspace Parameters
+workspace_params <- tibble(
+{tibble_body},
   A = {tfp_a:.6},
   alpha = {alpha:.6},
   beta = {beta:.6},
@@ -1040,301 +1205,173 @@ params <- tibble(
   x_star = {x_star:.6},
   y_star = {y_star:.6},
   lambda_star = {lambda_star:.6},
-  indirect_utility = {indirect_utility:.6}
+  indirect_utility = {indirect_u:.6}
 )
 
-print(params)
+print(workspace_params)
 glimpse(sim_data)
 
-# Generate primary publication-quality ggplot2 figure
+# Publication-quality ggplot2 visualization
 p_main <- ggplot(sim_data, aes(x = x)) +
-  geom_line(aes(y = primary_y, color = "Primary Curve"), linewidth = 1.15) +
-  geom_line(aes(y = secondary_y, color = "Secondary / Constraint"), linewidth = 0.95, linetype = "dashed") +
+  geom_line(aes(y = primary_y, color = "Primary Function f(x)"), linewidth = 1.2) +
+  geom_line(aes(y = secondary_y, color = "Secondary Function g(x)"), linewidth = 1.0, linetype = "dashed") +
   geom_point(
-    data = params,
-    aes(x = x_star, y = y_star, color = "Solved Equilibrium (x*, y*)"),
-    size = 3.6
+    data = workspace_params,
+    aes(x = x_star, y = y_star, color = "Equilibrium (x*, y*)"),
+    size = 3.8
   ) +
   scale_color_manual(
     name = "Series",
     values = c(
-      "Primary Curve" = "#2563eb",
-      "Secondary / Constraint" = "#dc2626",
-      "Solved Equilibrium (x*, y*)" = "#16a34a"
+      "Primary Function f(x)" = "#38bdf8",
+      "Secondary Function g(x)" = "#f97316",
+      "Equilibrium (x*, y*)" = "#22c55e"
     )
   ) +
   labs(
     title = "{model_title}",
-    subtitle = sprintf(
-      "Equilibrium: x* = %.4f, y* = %.4f | alpha = %.3f, beta = %.3f",
-      params$x_star, params$y_star, params$alpha, params$beta
-    ),
-    x = "x (Input L / Good X)",
-    y = "y (Input K / Good Y / f(x))",
-    caption = "Generated natively by econ-calc (Windows 11 ARM64)"
+    subtitle = sprintf("Equilibrium: (x* = %.4f, y* = %.4f) | lambda* = %.4f", workspace_params$x_star, workspace_params$y_star, workspace_params$lambda_star),
+    x = "Domain Variable x",
+    y = "Evaluated Response y",
+    caption = "Exported from econ-calc Dynamic Mathematical IDE (ARM64)"
   ) +
-  theme_minimal(base_size = 13) +
-  theme(
-    legend.position = "bottom",
-    plot.title = element_text(face = "bold")
-  )
+  theme_minimal(base_size = 13)
 
 print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
-"##,
-            model_title = self.active_model.to_exporter_kind().title(),
-            preset = self.active_preset_name,
+"#,
+            model_title = self.active_model.title(),
+            tibble_body = tibble_body,
             tfp_a = tfp_a,
             alpha = alpha,
             beta = beta,
-            price_x = price_x,
-            price_y = price_y,
+            price_x = px,
+            price_y = py,
             income = income,
             target_output = target_output,
             x_star = x_star,
             y_star = y_star,
             lambda_star = lambda_star,
-            indirect_utility = indirect_utility,
+            indirect_u = indirect_u,
         )
     }
 
-    /// Evaluates the multiline CAS / Math Input block line by line.
-    fn evaluate_cas_buffer(&mut self) {
-        let lines: Vec<String> = self
-            .cas_editor_buffer
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
+    /// Bundles the active dynamic `Workspace` (including `markdown_notes` and `csv_scratchpad` diagnostics)
+    /// into an `ExportPayload` and invokes `export_and_launch_positron`.
+    fn trigger_export_pipeline(&mut self) {
+        let (x_star, y_star, lambda_star, indirect_utility) = self.solve_structural_equilibrium();
+        let mut fn_iter = self.workspace.functions.values();
+        let custom_expr = fn_iter.next().cloned().unwrap_or_else(|| "x".to_string());
+        let secondary_expr = fn_iter.next().cloned().unwrap_or_else(|| "0.0".to_string());
 
-        if lines.is_empty() {
-            return;
-        }
+        let tfp_a = self.workspace.parameters.get("A").copied().unwrap_or(2.0_f64);
+        let alpha = self
+            .workspace
+            .parameters
+            .get("alpha")
+            .copied()
+            .unwrap_or(0.45_f64);
+        let beta = self
+            .workspace
+            .parameters
+            .get("beta")
+            .copied()
+            .unwrap_or(0.55_f64);
+        let price_x = self
+            .workspace
+            .parameters
+            .get("price_x")
+            .copied()
+            .unwrap_or(4.0_f64);
+        let price_y = self
+            .workspace
+            .parameters
+            .get("price_y")
+            .copied()
+            .unwrap_or(5.0_f64);
+        let income = self
+            .workspace
+            .parameters
+            .get("I")
+            .copied()
+            .unwrap_or(100.0_f64);
+        let target_output = self
+            .workspace
+            .parameters
+            .get("Y_bar")
+            .copied()
+            .unwrap_or(18.0_f64);
 
-        for line in lines {
-            if line == ":clear" {
-                self.console_history.clear();
-                continue;
-            }
+        let csv_pts = self.parse_csv_scratchpad_points();
+        let ols_summary = if let Some((b1, b0, r2)) = self.compute_csv_ols(&csv_pts) {
+            format!(
+                "CSV Scratchpad ({} obs): OLS y = {:.4}*x + {:.4} (R^2 = {:.4})",
+                csv_pts.len(),
+                b1,
+                b0,
+                r2
+            )
+        } else {
+            format!("CSV Scratchpad: {} valid (x, y) observation(s)", csv_pts.len())
+        };
 
-            if let Some(rhs) = line.strip_prefix("f(x) =") {
-                let new_expr = rhs.trim().to_string();
-                self.custom_expr = new_expr.clone();
-                self.console_history.push(ConsoleEntry {
-                    command: line,
-                    output: format!("Updated primary curve f(x) = {}", new_expr),
-                    is_error: false,
-                });
-                continue;
-            }
+        let summary_block = format!(
+            "Markdown Notes:\n{}\n\nEmpirical Scratchpad Summary:\n{}",
+            self.workspace.markdown_notes.trim(),
+            ols_summary
+        );
 
-            if let Some(rhs) = line.strip_prefix("g(x) =") {
-                let new_expr = rhs.trim().to_string();
-                self.secondary_expr = new_expr.clone();
-                self.console_history.push(ConsoleEntry {
-                    command: line,
-                    output: format!("Updated secondary curve g(x) = {}", new_expr),
-                    is_error: false,
-                });
-                continue;
-            }
-
-            // Support direct parameter assignment `param = value` in CAS editor
-            if let Some((lhs, rhs)) = line.split_once('=') {
-                let sym = lhs.trim().to_string();
-                let rhs_expr = rhs.trim().to_string();
-                let is_known_param = self.parameters.iter().any(|p| p.symbol == sym);
-                if is_known_param {
-                    let probe_x = self.get_param("x0", 6.0);
-                    match self.eval_expr_at(&rhs_expr, probe_x) {
-                        Ok(val) => {
-                            self.set_param(&sym, val);
-                            let out_msg = format!("Updated parameter {} = {:.6}", sym, val);
-                            self.console_history.push(ConsoleEntry {
-                                command: line,
-                                output: out_msg,
-                                is_error: false,
-                            });
-                        }
-                        Err(err) => {
-                            self.console_history.push(ConsoleEntry {
-                                command: line,
-                                output: err,
-                                is_error: true,
-                            });
-                        }
-                    }
-                    continue;
-                }
-            }
-
-            let res = self.parse_and_run_repl(&line);
-            match res {
-                Ok(out) => self.console_history.push(ConsoleEntry {
-                    command: line,
-                    output: out,
-                    is_error: false,
-                }),
-                Err(err) => self.console_history.push(ConsoleEntry {
-                    command: line,
-                    output: err,
-                    is_error: true,
-                }),
-            }
-        }
-
-        self.status_banner =
-            "Evaluated CAS / Math buffer against active Environment parameters.".to_string();
-    }
-
-    fn parse_and_run_repl(&self, cmd: &str) -> Result<String, String> {
-        if cmd == ":help" {
-            return Ok(
-                "Commands: `f(x) = <expr>`, `g(x) = <expr>`, `eval <expr> at <x>`, `diff <expr> at <x>`, `diff2 <expr> at <x>`, `int <expr> from <a> to <b>`, `root <expr> near <x0>`, `hessian`, or any math expression."
-                    .to_string(),
-            );
-        }
-
-        if cmd == "hessian" {
-            let (x_star, y_star, _, _) = self.solve_constrained_equilibrium();
-            let (h, det, trace) = self.compute_cobb_douglas_hessian(x_star, y_star);
-            return Ok(format!(
-                "Hessian H(x*={:.3}, y*={:.3}) = [[{:.5}, {:.5}], [{:.5}, {:.5}]] | det(H) = {:.6}, trace(H) = {:.6}",
-                x_star,
-                y_star,
-                h[(0, 0)],
-                h[(0, 1)],
-                h[(1, 0)],
-                h[(1, 1)],
-                det,
-                trace
-            ));
-        }
-
-        if let Some(rest) = cmd.strip_prefix("eval ") {
-            if let Some((expr, x_str)) = rest.rsplit_once(" at ") {
-                let x: f64 = x_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("Invalid number `{}`", x_str.trim()))?;
-                let val = self.eval_expr_at(expr.trim(), x)?;
-                return Ok(format!("f({:.6}) = {:.8}", x, val));
-            }
-        }
-
-        if let Some(rest) = cmd.strip_prefix("diff2 ") {
-            if let Some((expr, x_str)) = rest.rsplit_once(" at ") {
-                let x: f64 = x_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("Invalid number `{}`", x_str.trim()))?;
-                let val = self.numerical_second_derivative(expr.trim(), x)?;
-                return Ok(format!("f''({:.6}) = {:.8} (central difference)", x, val));
-            }
-        }
-
-        if let Some(rest) = cmd.strip_prefix("diff ") {
-            if let Some((expr, x_str)) = rest.rsplit_once(" at ") {
-                let x: f64 = x_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("Invalid number `{}`", x_str.trim()))?;
-                let val = self.numerical_derivative(expr.trim(), x)?;
-                return Ok(format!("f'({:.6}) = {:.8} (central difference)", x, val));
-            }
-        }
-
-        if let Some(rest) = cmd.strip_prefix("int ") {
-            if let Some((expr, bounds)) = rest.rsplit_once(" from ") {
-                if let Some((a_str, b_str)) = bounds.split_once(" to ") {
-                    let a: f64 = a_str
-                        .trim()
-                        .parse()
-                        .map_err(|_| format!("Invalid lower bound `{}`", a_str.trim()))?;
-                    let b: f64 = b_str
-                        .trim()
-                        .parse()
-                        .map_err(|_| format!("Invalid upper bound `{}`", b_str.trim()))?;
-                    let area =
-                        self.composite_simpson(expr.trim(), a, b, self.simpson_intervals)?;
-                    return Ok(format!(
-                        "Integral of `{}` on [{:.4}, {:.4}] = {:.8} (Simpson N={})",
-                        expr.trim(),
-                        a,
-                        b,
-                        area,
-                        self.simpson_intervals
-                    ));
-                }
-            }
-        }
-
-        if let Some(rest) = cmd.strip_prefix("root ") {
-            if let Some((expr, x0_str)) = rest.rsplit_once(" near ") {
-                let x0: f64 = x0_str
-                    .trim()
-                    .parse()
-                    .map_err(|_| format!("Invalid initial guess `{}`", x0_str.trim()))?;
-                let root = self.solve_root(expr.trim(), x0)?;
-                let residual = self.eval_expr_at(expr.trim(), root)?;
-                return Ok(format!(
-                    "Root x* = {:.8} (residual f(x*) = {:.3e})",
-                    root, residual
-                ));
-            }
-        }
-
-        let probe_x = self.get_param("x0", 6.0);
-        let val = self.eval_expr_at(cmd, probe_x)?;
-        Ok(format!("= {:.8} (evaluated at x = {:.4})", val, probe_x))
-    }
-
-    fn build_export_payload(&self) -> ExportPayload {
-        let (x_star, y_star, lambda_star, indirect_utility) = self.solve_constrained_equilibrium();
-        let game_sol = self.solve_game_2x2();
-
-        ExportPayload {
-            model_kind: self.active_model.to_exporter_kind(),
+        let payload = ExportPayload {
+            model_kind: self.active_model,
             report_format: self.report_format,
-            custom_expr: self.custom_expr.clone(),
-            secondary_expr: self.secondary_expr.clone(),
-            tfp_a: self.get_param("A", 2.0),
-            alpha: self.get_param("alpha", 0.45),
-            beta: self.get_param("beta", 0.55),
-            price_x: self.get_param("price_x", 4.0),
-            price_y: self.get_param("price_y", 5.0),
-            income: self.get_param("I", 100.0),
-            target_output: self.get_param("Y_bar", 20.0),
+            custom_expr,
+            secondary_expr,
+            tfp_a,
+            alpha,
+            beta,
+            price_x,
+            price_y,
+            income,
+            target_output,
             x_star,
             y_star,
             lambda_star,
             indirect_utility,
-            game_matrix: self.payoff_matrix,
-            game_summary: game_sol.summary_text,
-            latex_derivation: self.generate_latex_and_tikz(),
-            grid_rows: self.build_simulation_grid(100),
-        }
-    }
+            game_matrix: [
+                [(x_star, y_star), (price_x, price_y)],
+                [(alpha, beta), (lambda_star, indirect_utility)],
+            ],
+            game_summary: summary_block,
+            latex_derivation: self.generate_latex_derivation(),
+            grid_rows: self.build_simulation_grid(50),
+        };
 
-    fn trigger_positron_export(&mut self) {
-        let payload = self.build_export_payload();
         match export_and_launch_positron(&payload) {
-            Ok(outcome) => {
+            Ok(ExportOutcome {
+                export_dir,
+                launched_program,
+                status_message,
+            }) => {
                 self.status_banner = format!(
-                    "Exported to {:?} via {}",
-                    outcome.export_dir, outcome.launched_program
+                    "Exported bundle to {:?} via `{}`",
+                    export_dir, launched_program
                 );
-                self.console_history.push(ConsoleEntry {
-                    command: ":export positron".to_string(),
-                    output: outcome.status_message,
+                self.console_logs.push(ConsoleLogEntry {
+                    timestamp_tag: "EXPORT".to_string(),
+                    source_line: format!(
+                        "export_and_launch_positron({})",
+                        self.report_format.label()
+                    ),
+                    message: status_message,
                     is_error: false,
                 });
             }
             Err(err) => {
-                self.status_banner = format!("Export error: {}", err);
-                self.console_history.push(ConsoleEntry {
-                    command: ":export positron".to_string(),
-                    output: err,
+                self.status_banner = format!("Export failed: {}", err);
+                self.console_logs.push(ConsoleLogEntry {
+                    timestamp_tag: "EXPORT".to_string(),
+                    source_line: "export_and_launch_positron".to_string(),
+                    message: err,
                     is_error: true,
                 });
             }
@@ -1342,1128 +1379,612 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
     }
 
     // =========================================================================
-    // UI RENDERING: TOP HEADER BAR
+    // TOP BAR: Workspace Branding, Theme, & Status
     // =========================================================================
-    fn render_top_menu_bar(&mut self, ui: &mut Ui) {
+    fn render_top_header(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.label(
-                RichText::new("econ-calc IDE")
-                    .font(FontId::proportional(16.5_f32))
+                RichText::new("econ-calc")
+                    .font(FontId::proportional(17.5_f32))
                     .strong()
                     .color(Color32::from_rgb(56, 189, 248)),
             );
-            ui.separator();
-
             ui.label(
-                RichText::new(format!(
-                    "[{} — {}]",
-                    self.active_model.label(),
-                    self.active_preset_name
-                ))
-                .strong()
-                .color(Color32::from_rgb(129, 140, 248)),
+                RichText::new("Desmos × RStudio × Positron Symbolic IDE")
+                    .font(FontId::proportional(12.5_f32))
+                    .color(Color32::from_rgb(148, 163, 184)),
             );
-
             ui.separator();
 
             if ui
-                .button(RichText::new("Copy LaTeX / TikZ").strong())
-                .on_hover_text("Copy analytical LaTeX & TikZ derivation to clipboard")
+                .button(if self.dark_mode {
+                    RichText::new("Theme: Positron Dark").color(Color32::from_rgb(125, 211, 252))
+                } else {
+                    RichText::new("Theme: Positron Light").color(Color32::from_rgb(30, 64, 175))
+                })
                 .clicked()
             {
-                let latex = self.generate_latex_and_tikz();
-                ui.ctx().copy_text(latex);
-                self.status_banner =
-                    "Copied publication-ready LaTeX & TikZ derivation to clipboard.".to_string();
+                self.dark_mode = !self.dark_mode;
+                Self::apply_positron_theme(ui.ctx(), self.dark_mode);
             }
 
             ui.separator();
-
-            ui.label(RichText::new("Report:").strong());
-            ui.selectable_value(
-                &mut self.report_format,
-                ReportFormat::QuartoQmd,
-                ReportFormat::QuartoQmd.label(),
-            );
-            ui.selectable_value(
-                &mut self.report_format,
-                ReportFormat::RMarkdownRmd,
-                ReportFormat::RMarkdownRmd.label(),
-            );
-
-            if ui
-                .button(
-                    RichText::new("Export & Open in Positron")
-                        .strong()
-                        .color(Color32::from_rgb(34, 197, 94)),
-                )
-                .on_hover_text(
-                    "Export project.Rproj, simulation_data.csv, model_analysis.R, and report.qmd/.Rmd",
-                )
-                .clicked()
-            {
-                self.trigger_positron_export();
-            }
+            ui.label(RichText::new("Active Template:").color(Color32::from_rgb(148, 163, 184)));
+            egui::ComboBox::from_id_source("header_model_kind_combo")
+                .selected_text(self.active_model.title())
+                .show_ui(ui, |ui| {
+                    for kind in [
+                        ActiveModelKind::CustomExpression,
+                        ActiveModelKind::CobbDouglas,
+                        ActiveModelKind::ConstrainedUtility,
+                        ActiveModelKind::GameTheory2x2,
+                    ] {
+                        ui.selectable_value(&mut self.active_model, kind, kind.title());
+                    }
+                });
 
             ui.separator();
             ui.label(
                 RichText::new(&self.status_banner)
                     .italics()
-                    .color(Color32::from_rgb(148, 163, 184)),
+                    .color(Color32::from_rgb(52, 211, 153)),
             );
         });
     }
 
     // =========================================================================
-    // 1. LEFT ACTIVITY BAR & SIDEBAR (VS CODE HYBRID)
+    // 1. LEFT PANEL: "The Symbolic Environment"
     // =========================================================================
-    fn render_left_activity_and_sidebar(&mut self, ui: &mut Ui) {
-        // Activity Bar strip at the top of the Left Sidebar
+    fn render_left_symbolic_panel(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            let explorer_selected =
-                self.sidebar_open && self.sidebar_tab == SidebarTab::ModelExplorer;
-            if ui
-                .selectable_label(
-                    explorer_selected,
-                    RichText::new("📚 Explorer")
-                        .font(FontId::proportional(13.5_f32))
-                        .strong(),
-                )
-                .on_hover_text("Model Explorer & Preset Library")
-                .clicked()
-            {
-                if explorer_selected {
-                    self.sidebar_open = false;
-                } else {
-                    self.sidebar_open = true;
-                    self.sidebar_tab = SidebarTab::ModelExplorer;
-                }
-            }
-
-            let settings_selected = self.sidebar_open && self.sidebar_tab == SidebarTab::Settings;
-            if ui
-                .selectable_label(
-                    settings_selected,
-                    RichText::new("⚙ Settings")
-                        .font(FontId::proportional(13.5_f32))
-                        .strong(),
-                )
-                .on_hover_text("Global IDE Settings (Theme, 3D Resolution, UI Scale)")
-                .clicked()
-            {
-                if settings_selected {
-                    self.sidebar_open = false;
-                } else {
-                    self.sidebar_open = true;
-                    self.sidebar_tab = SidebarTab::Settings;
-                }
-            }
-        });
-
-        ui.separator();
-
-        if !self.sidebar_open {
-            ui.vertical_centered(|ui| {
-                ui.add_space(12.0_f32);
-                ui.label(
-                    RichText::new("Sidebar Collapsed\nClick Activity Tab to Expand")
-                        .italics()
-                        .color(Color32::from_rgb(148, 163, 184)),
-                );
-            });
-            return;
-        }
-
-        egui::ScrollArea::vertical()
-            .id_source("left_sidebar_content_scroll")
-            .show(ui, |ui| match self.sidebar_tab {
-                SidebarTab::ModelExplorer => self.render_model_explorer_tab(ui),
-                SidebarTab::Settings => self.render_settings_tab(ui),
-            });
-    }
-
-    fn render_model_explorer_tab(&mut self, ui: &mut Ui) {
-        ui.label(
-            RichText::new("MODEL EXPLORER")
-                .font(FontId::proportional(12.0_f32))
-                .strong()
-                .color(Color32::from_rgb(148, 163, 184)),
-        );
-        ui.add_space(4.0_f32);
-
-        if ui
-            .button(
-                RichText::new("➕ Blank Custom Workspace")
+            ui.label(
+                RichText::new("1. Symbolic Environment")
+                    .font(FontId::proportional(15.5_f32))
                     .strong()
                     .color(Color32::from_rgb(56, 189, 248)),
-            )
-            .on_hover_text("Initialize a clean Custom CAS workspace with generic parameters")
-            .clicked()
-        {
-            self.load_model_workspace(ActiveModel::CustomCAS, "Blank Custom Workspace");
-            self.custom_expr = "A * x^alpha".to_string();
-            self.secondary_expr = "price_x * x".to_string();
-            self.cas_editor_buffer =
-                "# Blank Custom Workspace\nf(x) = A * x^alpha\ng(x) = price_x * x\neval A * x^alpha at 5.0"
-                    .to_string();
-            self.status_banner = "Initialized Blank Custom CAS Workspace.".to_string();
-        }
-
-        ui.add_space(6.0_f32);
-
-        egui::CollapsingHeader::new(RichText::new("Consumer & Demand Theory").strong())
-            .default_open(true)
-            .show(ui, |ui| {
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::ConstrainedUtility
-                            && self.active_preset_name == "Standard Marshallian Consumer",
-                        "• Constrained Utility (Marshallian)",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::ConstrainedUtility,
-                        "Standard Marshallian Consumer",
-                    );
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::ConstrainedUtility
-                            && self.active_preset_name == "Good-X Intensive Preferences",
-                        "• Good-X Intensive Preferences (0.75 / 0.25)",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::ConstrainedUtility,
-                        "Good-X Intensive Preferences",
-                    );
-                    self.set_param("alpha", 0.75);
-                    self.set_param("beta", 0.25);
-                    self.set_param("price_x", 3.0);
-                    self.set_param("price_y", 6.0);
-                    self.set_param("I", 120.0);
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::ConstrainedUtility
-                            && self.active_preset_name == "High-Income Luxury Allocation",
-                        "• High-Income Luxury Allocation",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::ConstrainedUtility,
-                        "High-Income Luxury Allocation",
-                    );
-                    self.set_param("A", 3.5);
-                    self.set_param("alpha", 0.50);
-                    self.set_param("beta", 0.50);
-                    self.set_param("price_x", 8.0);
-                    self.set_param("price_y", 4.0);
-                    self.set_param("I", 320.0);
-                }
-            });
-
-        egui::CollapsingHeader::new(RichText::new("Production & Firm Theory").strong())
-            .default_open(true)
-            .show(ui, |ui| {
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::CobbDouglas
-                            && self.active_preset_name == "CRS Cobb-Douglas Isoquant",
-                        "• Cobb-Douglas CRS (alpha+beta = 1.0)",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::CobbDouglas,
-                        "CRS Cobb-Douglas Isoquant",
-                    );
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::CobbDouglas
-                            && self.active_preset_name == "Increasing Returns (IRS) Tech",
-                        "• Increasing Returns (IRS, alpha+beta = 1.3)",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::CobbDouglas,
-                        "Increasing Returns (IRS) Tech",
-                    );
-                    self.set_param("alpha", 0.65);
-                    self.set_param("beta", 0.65);
-                    self.set_param("Y_bar", 40.0);
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::CobbDouglas
-                            && self.active_preset_name == "Capital-Intensive Automation",
-                        "• Capital-Intensive Automation",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::CobbDouglas,
-                        "Capital-Intensive Automation",
-                    );
-                    self.set_param("alpha", 0.25);
-                    self.set_param("beta", 0.75);
-                    self.set_param("price_x", 10.0);
-                    self.set_param("price_y", 3.0);
-                }
-            });
-
-        egui::CollapsingHeader::new(RichText::new("Strategic Game Theory (2x2)").strong())
-            .default_open(true)
-            .show(ui, |ui| {
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::GameTheory
-                            && self.active_preset_name == "Prisoner's Dilemma",
-                        "• Prisoner's Dilemma",
-                    )
-                    .clicked()
-                {
-                    self.row_labels = ["Cooperate".to_string(), "Defect".to_string()];
-                    self.col_labels = ["Cooperate".to_string(), "Defect".to_string()];
-                    self.payoff_matrix = [[(3.0, 3.0), (0.0, 5.0)], [(5.0, 0.0), (1.0, 1.0)]];
-                    self.load_model_workspace(ActiveModel::GameTheory, "Prisoner's Dilemma");
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::GameTheory
-                            && self.active_preset_name == "Matching Pennies (MSNE)",
-                        "• Matching Pennies (Zero-Sum MSNE)",
-                    )
-                    .clicked()
-                {
-                    self.row_labels = ["Heads".to_string(), "Tails".to_string()];
-                    self.col_labels = ["Heads".to_string(), "Tails".to_string()];
-                    self.payoff_matrix = [[(1.0, -1.0), (-1.0, 1.0)], [(-1.0, 1.0), (1.0, -1.0)]];
-                    self.load_model_workspace(ActiveModel::GameTheory, "Matching Pennies (MSNE)");
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::GameTheory
-                            && self.active_preset_name == "Battle of the Sexes",
-                        "• Battle of the Sexes (Coordination)",
-                    )
-                    .clicked()
-                {
-                    self.row_labels = ["Opera".to_string(), "Football".to_string()];
-                    self.col_labels = ["Opera".to_string(), "Football".to_string()];
-                    self.payoff_matrix = [[(3.0, 2.0), (0.0, 0.0)], [(0.0, 0.0), (2.0, 3.0)]];
-                    self.load_model_workspace(ActiveModel::GameTheory, "Battle of the Sexes");
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::GameTheory
-                            && self.active_preset_name == "Stag Hunt",
-                        "• Stag Hunt (Payoff vs Risk Dominance)",
-                    )
-                    .clicked()
-                {
-                    self.row_labels = ["Stag".to_string(), "Hare".to_string()];
-                    self.col_labels = ["Stag".to_string(), "Hare".to_string()];
-                    self.payoff_matrix = [[(4.0, 4.0), (1.0, 3.0)], [(3.0, 1.0), (2.0, 2.0)]];
-                    self.load_model_workspace(ActiveModel::GameTheory, "Stag Hunt");
-                }
-            });
-
-        egui::CollapsingHeader::new(RichText::new("Quantitative CAS & Macroeconomics").strong())
-            .default_open(true)
-            .show(ui, |ui| {
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::CustomCAS
-                            && self.active_preset_name == "Firm Profit & Marginal Cost",
-                        "• Firm Profit & Marginal Cost Curve",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(
-                        ActiveModel::CustomCAS,
-                        "Firm Profit & Marginal Cost",
-                    );
-                    self.custom_expr = "A * x^alpha - price_x * x".to_string();
-                    self.secondary_expr = "price_x * x".to_string();
-                }
-
-                if ui
-                    .selectable_label(
-                        self.active_model == ActiveModel::CustomCAS
-                            && self.active_preset_name == "Solow-Swan Steady State",
-                        "• Solow-Swan Steady State Growth",
-                    )
-                    .clicked()
-                {
-                    self.load_model_workspace(ActiveModel::CustomCAS, "Solow-Swan Steady State");
-                    self.set_param("A", 1.8);
-                    self.set_param("alpha", 0.35);
-                    self.set_param("price_x", 0.12);
-                    self.custom_expr = "0.30 * A * x^alpha".to_string();
-                    self.secondary_expr = "price_x * x".to_string();
-                    self.cas_editor_buffer = "# Solow-Swan Capital Accumulation\n# f(x) = s * A * k^alpha, g(x) = (delta + n) * k\nf(x) = 0.30 * A * x^alpha\ng(x) = price_x * x\nroot (0.30 * A * x^alpha) - (price_x * x) near 8.0".to_string();
-                }
-            });
-    }
-
-    fn render_settings_tab(&mut self, ui: &mut Ui) {
-        ui.label(
-            RichText::new("GLOBAL IDE SETTINGS")
-                .font(FontId::proportional(12.0_f32))
-                .strong()
-                .color(Color32::from_rgb(148, 163, 184)),
-        );
-        ui.add_space(6.0_f32);
-
-        ui.label(RichText::new("Appearance & Scaling").strong());
-        if ui
-            .checkbox(&mut self.dark_mode, "Positron Dark Theme")
-            .changed()
-        {
-            ui.ctx().set_visuals(if self.dark_mode {
-                egui::Visuals::dark()
-            } else {
-                egui::Visuals::light()
-            });
-        }
-
-        if ui
-            .add(
-                egui::Slider::new(&mut self.ui_scale, 0.85_f32..=1.35_f32)
-                    .text("UI Scale (DPI)"),
-            )
-            .changed()
-        {
-            ui.ctx().set_pixels_per_point(self.ui_scale);
-        }
-
-        ui.separator();
-        ui.label(RichText::new("3D Surface Renderer").strong());
-        ui.add(
-            egui::Slider::new(&mut self.surface_resolution, 12..=48).text("Mesh Resolution (N)"),
-        );
-        ui.add(egui::Slider::new(&mut self.yaw_deg, -180.0_f32..=180.0_f32).text("Camera Yaw (°)"));
-        ui.add(egui::Slider::new(&mut self.pitch_deg, 5.0_f32..=85.0_f32).text("Camera Pitch (°)"));
-        ui.add(egui::Slider::new(&mut self.surface_zoom, 0.4_f32..=2.5_f32).text("Surface Zoom"));
-        ui.checkbox(&mut self.surface_wireframe_only, "Wireframe Mesh Only");
-
-        ui.separator();
-        ui.label(RichText::new("Numerical Calculus Engine").strong());
-        ui.checkbox(
-            &mut self.show_derivative_curve,
-            "Overlay Derivative f'(x) on 2D Plot",
-        );
-        ui.add(
-            egui::Slider::new(&mut self.simpson_intervals, 20..=600)
-                .text("Simpson Subintervals (N)"),
-        );
-    }
-
-    // =========================================================================
-    // 2. RIGHT ENVIRONMENT & DATA GRID PANE (RSTUDIO HYBRID)
-    // =========================================================================
-    fn render_right_environment_pane(&mut self, ui: &mut Ui) {
-        let total_height = ui.available_height();
-        let top_env_height = (total_height * 0.48_f32).max(200.0_f32);
-
-        // TOP HALF: Dynamic ModelParameter Sliders & Computed Values
-        ui.vertical(|ui| {
-            ui.set_min_height(top_env_height);
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new("ENVIRONMENT PARAMETERS")
-                        .font(FontId::proportional(12.5_f32))
-                        .strong()
-                        .color(Color32::from_rgb(56, 189, 248)),
-                );
-                ui.label(
-                    RichText::new(format!("({} active)", self.parameters.len()))
-                        .color(Color32::from_rgb(148, 163, 184)),
-                );
-            });
-            ui.separator();
-
-            egui::ScrollArea::vertical()
-                .id_source("right_env_parameters_scroll")
-                .max_height(top_env_height - 36.0_f32)
-                .show(ui, |ui| {
-                    for param in &mut self.parameters {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                RichText::new(param.symbol.to_string())
-                                    .monospace()
-                                    .strong()
-                                    .color(Color32::from_rgb(125, 211, 252)),
-                            );
-                            ui.label(
-                                RichText::new(format!("— {}", param.name))
-                                    .font(FontId::proportional(12.0_f32)),
-                            );
-                        });
-                        ui.add(egui::Slider::new(&mut param.value, param.min..=param.max));
-                        ui.add_space(2.0_f32);
-                    }
-
-                    ui.separator();
-                    egui::CollapsingHeader::new(
-                        RichText::new("➕ Add Custom Environment Variable")
-                            .font(FontId::proportional(12.0_f32)),
-                    )
-                    .default_open(false)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label("Symbol:");
-                            ui.text_edit_singleline(&mut self.new_param_symbol);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Name:");
-                            ui.text_edit_singleline(&mut self.new_param_name);
-                        });
-                        ui.horizontal(|ui| {
-                            ui.add(
-                                egui::DragValue::new(&mut self.new_param_val)
-                                    .speed(0.1)
-                                    .prefix("val: "),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut self.new_param_min)
-                                    .speed(0.5)
-                                    .prefix("min: "),
-                            );
-                            ui.add(
-                                egui::DragValue::new(&mut self.new_param_max)
-                                    .speed(0.5)
-                                    .prefix("max: "),
-                            );
-                        });
-                        if ui.button("Bind Variable to Environment").clicked() {
-                            let sym = self.new_param_symbol.trim().to_string();
-                            if !sym.is_empty() {
-                                let max_v = self.new_param_max.max(self.new_param_min + 0.01);
-                                let clamped = self.new_param_val.clamp(self.new_param_min, max_v);
-                                self.parameters.push(ModelParameter::new(
-                                    self.new_param_name.trim(),
-                                    &sym,
-                                    clamped,
-                                    self.new_param_min,
-                                    max_v,
-                                ));
-                            }
-                        }
-                    });
-
-                    ui.separator();
-                    let (x_star, y_star, lambda_star, obj_star) =
-                        self.solve_constrained_equilibrium();
-                    ui.label(
-                        RichText::new("Computed Equilibrium Bindings")
-                            .font(FontId::proportional(12.0_f32))
+                    .button(
+                        RichText::new("Clear Workspace")
                             .strong()
-                            .color(Color32::from_rgb(34, 197, 94)),
-                    );
-                    egui::Grid::new("env_computed_summary_grid")
-                        .striped(true)
-                        .spacing([10.0_f32, 4.0_f32])
-                        .show(ui, |ui| {
-                            ui.monospace("x* / L*");
-                            ui.monospace(format!("{:.5}", x_star));
-                            ui.monospace("y* / K*");
-                            ui.monospace(format!("{:.5}", y_star));
-                            ui.end_row();
-
-                            ui.monospace("lambda*");
-                            ui.monospace(format!("{:.5}", lambda_star));
-                            ui.monospace("V* / C*");
-                            ui.monospace(format!("{:.5}", obj_star));
-                            ui.end_row();
-                        });
-                });
-        });
-
-        ui.separator();
-
-        // BOTTOM HALF: RStudio-style Numerical Simulation Data Grid
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("DATA VIEWER: simulation_data (50 rows)")
-                    .font(FontId::proportional(12.5_f32))
-                    .strong()
-                    .color(Color32::from_rgb(56, 189, 248)),
-            );
-        });
-        ui.add_space(2.0_f32);
-
-        let grid_rows = self.build_simulation_grid(50);
-        let (col1, col2, col3, col4) = match self.active_model {
-            ActiveModel::CustomCAS => ("x", "f(x)", "g(x)", "f'(x)"),
-            ActiveModel::CobbDouglas => ("L", "K_isoquant", "K_isocost", "-MRTS"),
-            ActiveModel::ConstrainedUtility => ("x", "y_indiff", "y_budget", "-MRS"),
-            ActiveModel::GameTheory => ("q (Col L)", "E[U1|Up]", "E[U1|Down]", "Diff"),
-        };
-
-        egui::ScrollArea::vertical()
-            .id_source("right_data_viewer_grid_scroll")
-            .show(ui, |ui| {
-                egui::Grid::new("rstudio_dataframe_grid")
-                    .striped(true)
-                    .spacing([12.0_f32, 4.0_f32])
-                    .show(ui, |ui| {
-                        ui.label(RichText::new("#").strong());
-                        ui.label(RichText::new(col1).strong());
-                        ui.label(RichText::new(col2).strong());
-                        ui.label(RichText::new(col3).strong());
-                        ui.label(RichText::new(col4).strong());
-                        ui.end_row();
-
-                        for row in &grid_rows {
-                            ui.monospace(format!("{:02}", row.index));
-                            ui.monospace(format!("{:.3}", row.x));
-                            ui.monospace(format!("{:.4}", row.primary_y));
-                            ui.monospace(format!("{:.4}", row.secondary_y));
-                            ui.monospace(format!("{:.4}", row.marginal_or_slope));
-                            ui.end_row();
-                        }
-                    });
-            });
-    }
-
-    // =========================================================================
-    // 3. CENTER WORKSPACE: TOP VISUAL VIEWPORT & BOTTOM CODE/CONSOLE BLOCK
-    // =========================================================================
-    fn render_center_workspace(&mut self, ui: &mut Ui) {
-        // Split the CentralPanel vertically by placing a resizable bottom panel inside it
-        egui::TopBottomPanel::bottom("center_bottom_code_console_panel")
-            .resizable(true)
-            .default_height(275.0_f32)
-            .min_height(165.0_f32)
-            .show_inside(ui, |ui| {
-                self.render_center_bottom_code_block(ui);
-            });
-
-        // Remaining Top Area of CentralPanel is the Visual Viewport (2D Plot / 3D Surface)
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            self.render_center_top_visual_viewport(ui);
-        });
-    }
-
-    fn render_center_top_visual_viewport(&mut self, ui: &mut Ui) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("VISUAL VIEWPORT")
-                    .font(FontId::proportional(13.0_f32))
-                    .strong()
-                    .color(Color32::from_rgb(56, 189, 248)),
-            );
-            ui.separator();
-            ui.selectable_value(
-                &mut self.viewport_tab,
-                ViewportTab::Plot2D,
-                "📈 2D Economic Plot (egui_plot)",
-            );
-            ui.selectable_value(
-                &mut self.viewport_tab,
-                ViewportTab::Surface3D,
-                "🧊 3D Isometric Surface",
-            );
-
-            ui.separator();
-            let (x_star, y_star, lambda_star, obj_star) = self.solve_constrained_equilibrium();
-            ui.label(
-                RichText::new(format!(
-                    "Equilibrium: (x*={:.3}, y*={:.3}) | obj*={:.3} | λ*={:.3}",
-                    x_star, y_star, obj_star, lambda_star
-                ))
-                .monospace()
-                .color(Color32::from_rgb(34, 197, 94)),
-            );
-        });
-        ui.separator();
-
-        match self.viewport_tab {
-            ViewportTab::Plot2D => self.render_2d_plot_tab(ui),
-            ViewportTab::Surface3D => self.render_3d_surface_tab(ui),
-        }
-    }
-
-    fn render_center_bottom_code_block(&mut self, ui: &mut Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut self.code_console_tab,
-                CodeConsoleTab::CasMathInput,
-                RichText::new("⌨ CAS / Math Input").strong(),
-            );
-            ui.selectable_value(
-                &mut self.code_console_tab,
-                CodeConsoleTab::LatexOutput,
-                RichText::new("📄 LaTeX Output").strong(),
-            );
-            ui.selectable_value(
-                &mut self.code_console_tab,
-                CodeConsoleTab::RScriptPreview,
-                RichText::new("📊 R Script Preview (model_analysis.R)").strong(),
-            );
-
-            ui.separator();
-
-            if ui
-                .button(
-                    RichText::new("▶ Run / Evaluate")
-                        .strong()
-                        .color(Color32::from_rgb(34, 197, 94)),
-                )
-                .on_hover_text(
-                    "Evaluate CAS / Math Input using current Environment variables via meval",
-                )
-                .clicked()
-            {
-                self.evaluate_cas_buffer();
-            }
-
-            if ui
-                .button("Solve f(x) = g(x)")
-                .on_hover_text("Find numerical intersection of f(x) and g(x)")
-                .clicked()
-            {
-                let diff_expr = format!("({}) - ({})", self.custom_expr, self.secondary_expr);
-                let guess = self.get_param("x0", 5.0);
-                match self.solve_root(&diff_expr, guess) {
-                    Ok(r) => {
-                        self.set_param("x0", r);
-                        let y_val = self.eval_expr_at(&self.custom_expr, r).unwrap_or(0.0);
-                        self.console_history.push(ConsoleEntry {
-                            command: format!("intersect f(x) == g(x) near {:.2}", guess),
-                            output: format!(
-                                "Intersection converged at (x* = {:.6}, y* = {:.6})",
-                                r, y_val
-                            ),
-                            is_error: false,
-                        });
-                    }
-                    Err(e) => {
-                        self.console_history.push(ConsoleEntry {
-                            command: "intersect f(x) == g(x)".to_string(),
-                            output: e,
-                            is_error: true,
-                        });
-                    }
-                }
-            }
-
-            if ui.button("Inspect Hessian").clicked() {
-                if let Ok(out) = self.parse_and_run_repl("hessian") {
-                    self.console_history.push(ConsoleEntry {
-                        command: "hessian".to_string(),
-                        output: out,
+                            .color(Color32::from_rgb(248, 113, 113)),
+                    )
+                    .on_hover_text("Clears all symbolic functions, parameters, notes, and CSV data.")
+                    .clicked()
+                {
+                    self.workspace.clear();
+                    self.editor_script.clear();
+                    self.status_banner = "Cleared symbolic workspace environment.".to_string();
+                    self.console_logs.push(ConsoleLogEntry {
+                        timestamp_tag: "CLEAR".to_string(),
+                        source_line: "workspace.clear()".to_string(),
+                        message: "Removed all symbolic functions, parameters, and scratchpad data."
+                            .to_string(),
                         is_error: false,
                     });
                 }
-            }
-
-            if ui.button("Clear Log").clicked() {
-                self.console_history.clear();
-            }
+            });
         });
 
         ui.separator();
 
-        match self.code_console_tab {
-            CodeConsoleTab::CasMathInput => self.render_cas_math_input_tab(ui),
-            CodeConsoleTab::LatexOutput => self.render_latex_output_tab(ui),
-            CodeConsoleTab::RScriptPreview => self.render_r_script_preview_tab(ui),
+        egui::ScrollArea::vertical()
+            .id_source("left_symbolic_env_scroll")
+            .show(ui, |ui| {
+                // --- Section A: Active Symbolic Functions ---
+                ui.label(
+                    RichText::new(format!(
+                        "Symbolic Functions ({})",
+                        self.workspace.functions.len()
+                    ))
+                    .font(FontId::proportional(13.5_f32))
+                    .strong()
+                    .color(Color32::from_rgb(165, 180, 252)),
+                );
+                ui.add_space(4.0_f32);
+
+                if self.workspace.functions.is_empty() {
+                    ui.label(
+                        RichText::new(
+                            "No active functions. Define `f(x) = ...` in the Command Editor below.",
+                        )
+                        .italics()
+                        .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                } else {
+                    let palette = Self::series_palette();
+                    let mut remove_fn_key: Option<String> = None;
+
+                    let fn_snapshot: Vec<(String, String)> = self
+                        .workspace
+                        .functions
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect();
+
+                    let card_bg = if self.dark_mode {
+                        Color32::from_rgb(20, 29, 49)
+                    } else {
+                        Color32::from_rgb(241, 245, 249)
+                    };
+
+                    for (idx, (sig, expr)) in fn_snapshot.iter().enumerate() {
+                        let color = palette[idx % palette.len()];
+                        let math_sig = Self::format_symbolic_math(sig);
+                        let math_expr = Self::format_symbolic_math(expr);
+                        let probe_val = self
+                            .eval_expression_str(expr, self.probe_x, 10.0_f64)
+                            .ok();
+
+                        egui::Frame::group(ui.style())
+                            .fill(card_bg)
+                            .stroke(Stroke::new(1.0_f32, color.gamma_multiply(0.55_f32)))
+                            .rounding(Rounding::same(6.0_f32))
+                            .inner_margin(Margin::same(8.0_f32))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new("ƒ")
+                                            .font(FontId::proportional(16.0_f32))
+                                            .strong()
+                                            .italics()
+                                            .color(color),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("{} =", math_sig))
+                                            .font(FontId::monospace(13.5_f32))
+                                            .strong()
+                                            .color(color),
+                                    );
+                                    ui.label(
+                                        RichText::new(&math_expr)
+                                            .font(FontId::proportional(14.0_f32))
+                                            .italics()
+                                            .color(if self.dark_mode {
+                                                Color32::from_rgb(226, 232, 240)
+                                            } else {
+                                                Color32::from_rgb(15, 23, 42)
+                                            }),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .small_button(
+                                                    RichText::new("×")
+                                                        .color(Color32::from_rgb(248, 113, 113)),
+                                                )
+                                                .on_hover_text("Remove function")
+                                                .clicked()
+                                            {
+                                                remove_fn_key = Some(sig.clone());
+                                            }
+                                        },
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(format!("meval: `{}`", expr))
+                                            .font(FontId::monospace(11.0_f32))
+                                            .color(Color32::from_rgb(148, 163, 184)),
+                                    );
+                                    if let Some(v) = probe_val {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "@ x={:.2} → {:.4}",
+                                                        self.probe_x, v
+                                                    ))
+                                                    .font(FontId::monospace(11.5_f32))
+                                                    .color(Color32::from_rgb(52, 211, 153)),
+                                                );
+                                            },
+                                        );
+                                    }
+                                });
+                            });
+                        ui.add_space(4.0_f32);
+                    }
+
+                    if let Some(k) = remove_fn_key {
+                        self.workspace.functions.remove(&k);
+                    }
+                }
+
+                ui.add_space(8.0_f32);
+                ui.separator();
+
+                // --- Section B: Dynamic Parameter Sliders ---
+                ui.label(
+                    RichText::new(format!(
+                        "Dynamic Parameters ({} Live Sliders)",
+                        self.workspace.parameters.len()
+                    ))
+                    .font(FontId::proportional(13.5_f32))
+                    .strong()
+                    .color(Color32::from_rgb(56, 189, 248)),
+                );
+                ui.add_space(4.0_f32);
+
+                if self.workspace.parameters.is_empty() {
+                    ui.label(
+                        RichText::new(
+                            "No active parameters. Enter `\\alpha = 0.5` in the Command Editor.",
+                        )
+                        .italics()
+                        .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                } else {
+                    let param_bg = if self.dark_mode {
+                        Color32::from_rgb(18, 26, 44)
+                    } else {
+                        Color32::from_rgb(241, 245, 249)
+                    };
+                    let mut any_slider_changed = false;
+
+                    for (name, val) in &mut self.workspace.parameters {
+                        let pretty_name = Self::format_symbolic_math(name);
+                        let (min_bound, max_bound) = Self::infer_slider_bounds(name, *val);
+
+                        egui::Frame::group(ui.style())
+                            .fill(param_bg)
+                            .rounding(Rounding::same(5.0_f32))
+                            .inner_margin(Margin::symmetric(8.0_f32, 5.0_f32))
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&pretty_name)
+                                            .font(FontId::monospace(13.5_f32))
+                                            .strong()
+                                            .color(Color32::from_rgb(125, 211, 252)),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("({})", name))
+                                            .font(FontId::monospace(11.0_f32))
+                                            .color(Color32::from_rgb(100, 116, 139)),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!("{:.4}", *val))
+                                                    .font(FontId::monospace(12.5_f32))
+                                                    .strong()
+                                                    .color(Color32::from_rgb(250, 204, 21)),
+                                            );
+                                        },
+                                    );
+                                });
+                                let slider_resp = ui.add(
+                                    egui::Slider::new(val, min_bound..=max_bound)
+                                        .show_value(false)
+                                        .step_by(0.005_f64),
+                                );
+                                if slider_resp.changed() {
+                                    any_slider_changed = true;
+                                }
+                            });
+                        ui.add_space(3.0_f32);
+                    }
+
+                    if any_slider_changed {
+                        ui.ctx().request_repaint();
+                    }
+                }
+
+                ui.add_space(8.0_f32);
+                ui.separator();
+
+                // --- Section C: Domain & Probe Controls ---
+                ui.label(
+                    RichText::new("Domain & Calculus Probe Controls")
+                        .font(FontId::proportional(13.5_f32))
+                        .strong()
+                        .color(Color32::from_rgb(148, 163, 184)),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.domain_min, -25.0_f64..=20.0_f64)
+                        .text("Domain x_min"),
+                );
+                ui.add(
+                    egui::Slider::new(&mut self.domain_max, 1.0_f64..=150.0_f64)
+                        .text("Domain x_max"),
+                );
+                if self.domain_max <= self.domain_min + 0.25_f64 {
+                    self.domain_max = self.domain_min + 0.25_f64;
+                }
+                ui.add(
+                    egui::Slider::new(&mut self.probe_x, self.domain_min..=self.domain_max)
+                        .text("Calculus Probe x₀"),
+                );
+                ui.checkbox(
+                    &mut self.show_derivative_overlay,
+                    "Overlay Numerical Derivative f'(x)",
+                );
+                ui.checkbox(
+                    &mut self.show_csv_ols_line,
+                    "Overlay CSV OLS Regression Line",
+                );
+
+                ui.add_space(6.0_f32);
+                let (x_star, y_star, lambda_star, indirect_u) = self.solve_structural_equilibrium();
+                egui::Frame::group(ui.style())
+                    .fill(if self.dark_mode {
+                        Color32::from_rgb(14, 34, 48)
+                    } else {
+                        Color32::from_rgb(220, 252, 231)
+                    })
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(34, 197, 94)))
+                    .rounding(Rounding::same(6.0_f32))
+                    .inner_margin(Margin::same(8.0_f32))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Solved Equilibrium / Tangency")
+                                .strong()
+                                .color(Color32::from_rgb(74, 222, 128)),
+                        );
+                        ui.monospace(format!("x* = {:.5}   |   y* = {:.5}", x_star, y_star));
+                        ui.monospace(format!(
+                            "λ* = {:.5}   |   V* = {:.5}",
+                            lambda_star, indirect_u
+                        ));
+                    });
+            });
+    }
+
+    fn infer_slider_bounds(name: &str, current: f64) -> (f64, f64) {
+        let lower_name = name.to_lowercase();
+        if lower_name.contains("alpha")
+            || lower_name.contains("beta")
+            || lower_name.contains("delta")
+            || lower_name == "s"
+            || lower_name == "c_1"
+            || lower_name == "n"
+        {
+            let lo = 0.01_f64.min(current - 0.5_f64);
+            let hi = 1.50_f64.max(current + 0.5_f64);
+            (lo, hi)
+        } else if lower_name == "i" || lower_name.contains("income") || lower_name.contains("y_bar")
+        {
+            let lo = 1.0_f64.min(current * 0.2_f64);
+            let hi = 300.0_f64.max(current * 2.5_f64);
+            (lo, hi)
+        } else if current.abs() <= 2.0_f64 {
+            (-5.0_f64, 10.0_f64)
+        } else {
+            let span = current.abs() * 2.5_f64;
+            ((current - span).min(0.0_f64), current + span)
         }
     }
 
-    fn render_cas_math_input_tab(&mut self, ui: &mut Ui) {
-        ui.columns(2, |cols| {
-            // Left Column: Formula Bindings, Multiline CAS Editor, and optional 2x2 Game Matrix
-            cols[0].vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("f(x) =").monospace().strong());
-                    ui.text_edit_singleline(&mut self.custom_expr);
-                });
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("g(x) =").monospace().strong());
-                    ui.text_edit_singleline(&mut self.secondary_expr);
-                });
+    fn series_palette() -> [Color32; 6] {
+        [
+            Color32::from_rgb(56, 189, 248),  // Sky Blue
+            Color32::from_rgb(249, 115, 22),  // Orange
+            Color32::from_rgb(168, 85, 247),  // Purple
+            Color32::from_rgb(52, 211, 153),  // Emerald
+            Color32::from_rgb(250, 204, 21),  // Yellow
+            Color32::from_rgb(244, 114, 182), // Pink
+        ]
+    }
 
-                if self.active_model == ActiveModel::GameTheory {
-                    ui.add_space(2.0_f32);
-                    ui.label(
-                        RichText::new("2x2 Normal-Form Payoff Matrix (u1, u2):")
-                            .font(FontId::proportional(12.0_f32))
-                            .strong(),
-                    );
-                    egui::Grid::new("center_game_matrix_grid")
-                        .striped(true)
-                        .spacing([8.0_f32, 4.0_f32])
-                        .show(ui, |ui| {
-                            ui.label(RichText::new("P1 \\ P2").strong());
-                            ui.text_edit_singleline(&mut self.col_labels[0]);
-                            ui.text_edit_singleline(&mut self.col_labels[1]);
-                            ui.end_row();
+    // =========================================================================
+    // 2. CENTER PANEL: "The Editor & Viewport" (Split Top/Bottom)
+    // =========================================================================
+    fn render_center_panel(&mut self, ui: &mut Ui) {
+        let total_height = ui.available_height();
+        let top_viewport_height = (total_height * 0.54_f32).max(240.0_f32);
 
-                            for r in 0..2 {
-                                ui.text_edit_singleline(&mut self.row_labels[r]);
-                                for c in 0..2 {
-                                    ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::DragValue::new(&mut self.payoff_matrix[r][c].0)
-                                                .speed(0.25)
-                                                .prefix("u1:"),
-                                        );
-                                        ui.add(
-                                            egui::DragValue::new(&mut self.payoff_matrix[r][c].1)
-                                                .speed(0.25)
-                                                .prefix("u2:"),
-                                        );
-                                    });
-                                }
-                                ui.end_row();
-                            }
-                        });
-                } else {
-                    ui.label(
-                        RichText::new("CAS Script Buffer (supports meval expressions & commands):")
-                            .font(FontId::proportional(11.5_f32))
-                            .color(Color32::from_rgb(148, 163, 184)),
-                    );
-                    egui::ScrollArea::vertical()
-                        .id_source("cas_multiline_editor_scroll")
-                        .show(ui, |ui| {
-                            ui.add_sized(
-                                ui.available_size(),
-                                TextEdit::multiline(&mut self.cas_editor_buffer)
-                                    .code_editor()
-                                    .desired_rows(6),
-                            );
-                        });
-                }
-            });
-
-            // Right Column: Live CAS Evaluation & Equilibrium Output Console
-            cols[1].vertical(|ui| {
+        // --- TOP HALF: 2D Desmos Plot & 3D Isometric Surface ---
+        ui.allocate_ui(Vec2::new(ui.available_width(), top_viewport_height), |ui| {
+            ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new("CONSOLE / EVALUATION OUTPUT")
-                        .font(FontId::proportional(11.5_f32))
+                    RichText::new("2A. Interactive Mathematical Viewport")
+                        .font(FontId::proportional(15.5_f32))
                         .strong()
                         .color(Color32::from_rgb(56, 189, 248)),
                 );
+                ui.separator();
+                ui.selectable_value(
+                    &mut self.viewport_mode,
+                    ViewportMode::Plot2D,
+                    RichText::new("2D Desmos Plot (Independent X/Y Zoom)").strong(),
+                );
+                ui.selectable_value(
+                    &mut self.viewport_mode,
+                    ViewportMode::Surface3D,
+                    RichText::new("3D Isometric Surface").strong(),
+                );
+                ui.separator();
+                ui.label(
+                    RichText::new(
+                        "Tip: Drag to pan, Scroll to zoom, Ctrl+Scroll (X-axis), Shift+Scroll (Y-axis), Right-drag box zoom",
+                    )
+                    .font(FontId::proportional(11.5_f32))
+                    .color(Color32::from_rgb(148, 163, 184)),
+                );
+            });
+            ui.separator();
 
-                if self.active_model == ActiveModel::GameTheory {
-                    let sol = self.solve_game_2x2();
-                    ui.monospace(
-                        RichText::new(&sol.summary_text).color(Color32::from_rgb(34, 197, 94)),
+            match self.viewport_mode {
+                ViewportMode::Plot2D => self.render_2d_desmos_plot(ui),
+                ViewportMode::Surface3D => self.render_3d_isometric_surface(ui),
+            }
+        });
+
+        ui.add_space(4.0_f32);
+        ui.separator();
+
+        // --- BOTTOM HALF: Full-Width Code Editor & Output Tabs ---
+        self.render_bottom_code_editor(ui);
+    }
+
+    fn render_2d_desmos_plot(&mut self, ui: &mut Ui) {
+        let palette = Self::series_palette();
+        let csv_pts = self.parse_csv_scratchpad_points();
+        let ols_fit = if self.show_csv_ols_line {
+            self.compute_csv_ols(&csv_pts)
+        } else {
+            None
+        };
+        let intersection = self.find_primary_secondary_intersection();
+
+        // Do NOT set view_aspect or data_aspect so X and Y axes stretch/zoom independently like Desmos.
+        Plot::new("desmos_2d_symbolic_plot")
+            .legend(Legend::default())
+            .allow_zoom([true, true])
+            .allow_drag([true, true])
+            .allow_scroll(true)
+            .allow_boxed_zoom(true)
+            .show(ui, |plot_ui| {
+                // Combine configured domain with visible viewport bounds so panning/zooming never clips curves
+                let visible_bounds = plot_ui.plot_bounds();
+                let (vis_min_x, vis_max_x) = (visible_bounds.min()[0], visible_bounds.max()[0]);
+                let sample_min = if vis_min_x.is_finite() && (vis_max_x - vis_min_x) > 1e-3_f64 {
+                    self.domain_min.min(vis_min_x).max(-1e4_f64)
+                } else {
+                    self.domain_min
+                };
+                let sample_max = if vis_max_x.is_finite() && (vis_max_x - vis_min_x) > 1e-3_f64 {
+                    self.domain_max.max(vis_max_x).min(1e4_f64)
+                } else {
+                    self.domain_max
+                };
+                let span = (sample_max - sample_min).max(1e-3_f64);
+                let samples = 300_usize;
+
+                // 1. Plot all symbolic functions in workspace.functions
+                for (idx, (sig, expr)) in self.workspace.functions.iter().enumerate() {
+                    let color = palette[idx % palette.len()];
+                    let pts: PlotPoints = (0..=samples)
+                        .filter_map(|i| {
+                            let x = sample_min + span * (i as f64) / (samples as f64);
+                            let y = self.eval_expression_str(expr, x, 10.0_f64).ok()?;
+                            (y.is_finite() && y.abs() < 1e6_f64).then_some([x, y])
+                        })
+                        .collect();
+
+                    let line_style = if idx == 1 {
+                        LineStyle::Dashed { length: 8.0_f32 }
+                    } else {
+                        LineStyle::Solid
+                    };
+
+                    plot_ui.line(
+                        Line::new(pts)
+                            .name(format!("{} = {}", Self::format_symbolic_math(sig), expr))
+                            .width(2.4_f32)
+                            .style(line_style)
+                            .color(color),
                     );
-                    ui.separator();
                 }
 
-                egui::ScrollArea::vertical()
-                    .id_source("cas_output_log_scroll")
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for entry in &self.console_history {
-                            ui.monospace(
-                                RichText::new(format!("> {}", entry.command))
-                                    .color(Color32::from_rgb(56, 189, 248))
-                                    .strong(),
-                            );
-                            let out_color = if entry.is_error {
-                                Color32::from_rgb(248, 113, 113)
-                            } else {
-                                ui.visuals().text_color()
-                            };
-                            ui.monospace(
-                                RichText::new(format!("  {}", entry.output)).color(out_color),
-                            );
-                        }
-                    });
-            });
-        });
-    }
-
-    fn render_latex_output_tab(&mut self, ui: &mut Ui) {
-        let mut latex_code = self.generate_latex_and_tikz();
-        egui::ScrollArea::vertical()
-            .id_source("latex_readonly_scroll")
-            .show(ui, |ui| {
-                ui.add_sized(
-                    ui.available_size(),
-                    TextEdit::multiline(&mut latex_code)
-                        .code_editor()
-                        .interactive(false),
-                );
-            });
-    }
-
-    fn render_r_script_preview_tab(&mut self, ui: &mut Ui) {
-        let mut r_script = self.generate_r_script_preview();
-        egui::ScrollArea::vertical()
-            .id_source("r_script_readonly_scroll")
-            .show(ui, |ui| {
-                ui.add_sized(
-                    ui.available_size(),
-                    TextEdit::multiline(&mut r_script)
-                        .code_editor()
-                        .interactive(false),
-                );
-            });
-    }
-
-    // =========================================================================
-    // 2D & 3D VIEWPORT RENDERERS
-    // =========================================================================
-    fn render_2d_plot_tab(&mut self, ui: &mut Ui) {
-        let (x_star, y_star, _, indirect_u) = self.solve_constrained_equilibrium();
-        let tfp_a = self.get_param("A", 2.0).max(1e-6);
-        let alpha = self.get_param("alpha", 0.45).max(1e-6);
-        let beta = self.get_param("beta", 0.55).max(1e-6);
-        let px = self.get_param("price_x", 4.0).max(1e-6);
-        let py = self.get_param("price_y", 5.0).max(1e-6);
-        let income = self.get_param("I", 100.0).max(1e-6);
-        let target_output = self.get_param("Y_bar", 20.0).max(1e-6);
-
-        Plot::new("main_econ_plot")
-            .legend(Legend::default())
-            .show(ui, |plot_ui| match self.active_model {
-                ActiveModel::CustomCAS => {
-                    let dom_min = self.get_param("x_min", 0.1);
-                    let dom_max = self.get_param("x_max", 25.0).max(dom_min + 0.5);
-                    let probe_x = self.get_param("x0", 6.0);
-                    let span = (dom_max - dom_min).max(1e-3);
-
-                    let primary_pts: PlotPoints = (0..=240)
-                        .filter_map(|i| {
-                            let x = dom_min + span * (i as f64) / 240.0;
-                            let y = self.eval_expr_at(&self.custom_expr, x).ok()?;
-                            y.is_finite().then_some([x, y])
-                        })
-                        .collect();
-
-                    let secondary_pts: PlotPoints = (0..=240)
-                        .filter_map(|i| {
-                            let x = dom_min + span * (i as f64) / 240.0;
-                            let y = self.eval_expr_at(&self.secondary_expr, x).ok()?;
-                            y.is_finite().then_some([x, y])
-                        })
-                        .collect();
-
-                    plot_ui.line(
-                        Line::new(primary_pts)
-                            .name(format!("f(x) = {}", self.custom_expr))
-                            .width(2.4_f32)
-                            .color(Color32::from_rgb(59, 130, 246)),
-                    );
-                    plot_ui.line(
-                        Line::new(secondary_pts)
-                            .name(format!("g(x) = {}", self.secondary_expr))
-                            .width(1.8_f32)
-                            .color(Color32::from_rgb(249, 115, 22)),
-                    );
-
-                    if self.show_derivative_curve {
-                        let deriv_pts: PlotPoints = (0..=240)
+                // 2. Optional numerical derivative f'(x) of primary function
+                if self.show_derivative_overlay {
+                    if let Some((sig, expr)) = self.workspace.functions.iter().next() {
+                        let deriv_pts: PlotPoints = (0..=samples)
                             .filter_map(|i| {
-                                let x = dom_min + span * (i as f64) / 240.0;
-                                let dy = self.numerical_derivative(&self.custom_expr, x).ok()?;
-                                dy.is_finite().then_some([x, dy])
+                                let x = sample_min + span * (i as f64) / (samples as f64);
+                                let dy = self.numerical_derivative(expr, x).ok()?;
+                                (dy.is_finite() && dy.abs() < 1e6_f64).then_some([x, dy])
                             })
                             .collect();
+
                         plot_ui.line(
                             Line::new(deriv_pts)
-                                .name("Derivative f'(x)")
-                                .width(1.5_f32)
-                                .color(Color32::from_rgb(168, 85, 247)),
+                                .name(format!("d/dx {}", sig))
+                                .width(1.6_f32)
+                                .style(LineStyle::Dotted { spacing: 5.0_f32 })
+                                .color(Color32::from_rgb(244, 114, 182)),
                         );
                     }
+                }
 
-                    if let Ok(y0) = self.eval_expr_at(&self.custom_expr, probe_x) {
-                        if y0.is_finite() {
+                // 3. Probe point marker on primary function
+                if let Some((sig, expr)) = self.workspace.functions.iter().next() {
+                    if let Ok(y_probe) = self.eval_expression_str(expr, self.probe_x, 10.0_f64) {
+                        if y_probe.is_finite() {
+                            plot_ui.vline(
+                                VLine::new(self.probe_x)
+                                    .name(format!("Probe x₀ = {:.2}", self.probe_x))
+                                    .style(LineStyle::Dotted { spacing: 6.0_f32 })
+                                    .color(Color32::from_rgb(148, 163, 184)),
+                            );
                             plot_ui.points(
-                                Points::new(vec![[probe_x, y0]])
-                                    .name(format!("Probe x0 ({:.3}, {:.3})", probe_x, y0))
+                                Points::new(vec![[self.probe_x, y_probe]])
+                                    .name(format!(
+                                        "Probe {}({:.2}) = {:.3}",
+                                        sig, self.probe_x, y_probe
+                                    ))
                                     .radius(5.5_f32)
-                                    .color(Color32::from_rgb(34, 197, 94)),
+                                    .shape(MarkerShape::Diamond)
+                                    .color(Color32::from_rgb(250, 204, 21)),
                             );
                         }
                     }
                 }
-                ActiveModel::CobbDouglas => {
-                    let max_l = (x_star * 2.5).max(15.0);
-                    let max_k = (y_star * 2.5).max(15.0);
-                    let min_cost = px * x_star + py * y_star;
 
-                    for (mult, label_suffix, width) in [
-                        (0.75, "0.75 * Y_bar", 1.3_f32),
-                        (1.0, "Active Isoquant Y_bar", 2.6_f32),
-                        (1.30, "1.30 * Y_bar", 1.3_f32),
-                    ] {
-                        let y_target = target_output * mult;
-                        let iso_pts: PlotPoints = (1..=220)
-                            .filter_map(|i| {
-                                let l = 0.2 + (max_l - 0.2) * (i as f64) / 220.0;
-                                let k = (y_target / (tfp_a * l.powf(alpha)))
-                                    .max(0.0)
-                                    .powf(1.0 / beta);
-                                (k.is_finite() && k <= max_k * 1.4).then_some([l, k])
-                            })
-                            .collect();
-                        plot_ui.line(
-                            Line::new(iso_pts)
-                                .name(format!("{} ({:.1})", label_suffix, y_target))
-                                .width(width),
-                        );
-                    }
-
-                    let isocost_pts: PlotPoints = (0..=100)
-                        .filter_map(|i| {
-                            let l = max_l * (i as f64) / 100.0;
-                            let k = (min_cost - px * l) / py;
-                            (k >= 0.0).then_some([l, k])
-                        })
-                        .collect();
-
-                    plot_ui.line(
-                        Line::new(isocost_pts)
-                            .name(format!("Isocost Line (C* = {:.2})", min_cost))
-                            .width(2.0_f32)
-                            .color(Color32::from_rgb(239, 68, 68)),
-                    );
-
+                // 4. Intersection / Equilibrium marker between primary & secondary curves
+                if let Some((ix, iy)) = intersection {
                     plot_ui.points(
-                        Points::new(vec![[x_star, y_star]])
-                            .name(format!("Cost-Min Bundle (L*={:.2}, K*={:.2})", x_star, y_star))
-                            .radius(6.0_f32)
+                        Points::new(vec![[ix, iy]])
+                            .name(format!("Equilibrium (x*={:.3}, y*={:.3})", ix, iy))
+                            .radius(6.5_f32)
+                            .shape(MarkerShape::Circle)
                             .color(Color32::from_rgb(34, 197, 94)),
                     );
                 }
-                ActiveModel::ConstrainedUtility => {
-                    let max_x = (income / px) * 1.25;
-                    let max_y = (income / py) * 1.25;
 
-                    for (mult, label_prefix, width) in [
-                        (0.75, "Lower Indifference (0.75 U*)", 1.3_f32),
-                        (1.0, "Optimal Indifference U*", 2.6_f32),
-                        (1.25, "Higher Indifference (1.25 U*)", 1.3_f32),
-                    ] {
-                        let u_level = indirect_u.max(1e-6) * mult;
-                        let indiff_pts: PlotPoints = (1..=220)
-                            .filter_map(|i| {
-                                let x = 0.15 + (max_x - 0.15) * (i as f64) / 220.0;
-                                let y = (u_level / (tfp_a * x.powf(alpha)))
-                                    .max(0.0)
-                                    .powf(1.0 / beta);
-                                (y.is_finite() && y <= max_y * 1.5).then_some([x, y])
-                            })
-                            .collect();
-                        plot_ui.line(
-                            Line::new(indiff_pts)
-                                .name(format!("{} = {:.2}", label_prefix, u_level))
-                                .width(width),
-                        );
-                    }
-
-                    let budget_pts: PlotPoints = (0..=100)
-                        .filter_map(|i| {
-                            let x = max_x * (i as f64) / 100.0;
-                            let y = (income - px * x) / py;
-                            (y >= 0.0).then_some([x, y])
-                        })
-                        .collect();
-
-                    plot_ui.line(
-                        Line::new(budget_pts)
-                            .name(format!(
-                                "Budget Constraint ({:.1}x + {:.1}y = {:.1})",
-                                px, py, income
-                            ))
-                            .width(2.2_f32)
-                            .color(Color32::from_rgb(239, 68, 68)),
-                    );
-
+                // 5. CSV Scratchpad Scatter Plot Overlay + Optional OLS Fit
+                if !csv_pts.is_empty() {
                     plot_ui.points(
-                        Points::new(vec![[x_star, y_star]])
-                            .name(format!(
-                                "Marshallian Optimum (x*={:.2}, y*={:.2})",
-                                x_star, y_star
-                            ))
-                            .radius(6.0_f32)
-                            .color(Color32::from_rgb(34, 197, 94)),
-                    );
-                }
-                ActiveModel::GameTheory => {
-                    let m = &self.payoff_matrix;
-                    let sol = self.solve_game_2x2();
-
-                    let eu_up_pts: PlotPoints = (0..=100)
-                        .map(|i| {
-                            let q = (i as f64) / 100.0;
-                            let u = q * m[0][0].0 + (1.0 - q) * m[0][1].0;
-                            [q, u]
-                        })
-                        .collect();
-
-                    let eu_down_pts: PlotPoints = (0..=100)
-                        .map(|i| {
-                            let q = (i as f64) / 100.0;
-                            let u = q * m[1][0].0 + (1.0 - q) * m[1][1].0;
-                            [q, u]
-                        })
-                        .collect();
-
-                    plot_ui.line(
-                        Line::new(eu_up_pts)
-                            .name(format!("E[U1 | {}] vs q", self.row_labels[0]))
-                            .width(2.4_f32)
-                            .color(Color32::from_rgb(59, 130, 246)),
-                    );
-                    plot_ui.line(
-                        Line::new(eu_down_pts)
-                            .name(format!("E[U1 | {}] vs q", self.row_labels[1]))
-                            .width(2.4_f32)
-                            .color(Color32::from_rgb(249, 115, 22)),
+                        Points::new(csv_pts.clone())
+                            .name(format!("CSV Scratchpad Data (n={})", csv_pts.len()))
+                            .radius(5.0_f32)
+                            .shape(MarkerShape::Cross)
+                            .color(Color32::from_rgb(248, 113, 113)),
                     );
 
-                    if let (Some(q_star), Some(eu1)) = (sol.mixed_q, sol.expected_u1) {
-                        plot_ui.vline(
-                            VLine::new(q_star)
-                                .name(format!("MSNE q* = {:.3}", q_star))
-                                .color(Color32::from_rgb(168, 85, 247)),
-                        );
-                        plot_ui.points(
-                            Points::new(vec![[q_star, eu1]])
+                    if let Some((beta1, beta0, r2)) = ols_fit {
+                        let x0 = sample_min;
+                        let x1 = sample_max;
+                        let ols_pts = PlotPoints::from(vec![
+                            [x0, beta1 * x0 + beta0],
+                            [x1, beta1 * x1 + beta0],
+                        ]);
+                        plot_ui.line(
+                            Line::new(ols_pts)
                                 .name(format!(
-                                    "Indifference Point (q*={:.3}, E[U1]={:.3})",
-                                    q_star, eu1
+                                    "CSV OLS Fit: y = {:.3}x + {:.3} (R²={:.3})",
+                                    beta1, beta0, r2
                                 ))
-                                .radius(6.0_f32)
-                                .color(Color32::from_rgb(34, 197, 94)),
+                                .width(1.6_f32)
+                                .style(LineStyle::Dashed { length: 5.0_f32 })
+                                .color(Color32::from_rgb(248, 113, 113)),
                         );
                     }
                 }
             });
     }
 
-    fn render_3d_surface_tab(&mut self, ui: &mut Ui) {
+    fn render_3d_isometric_surface(&mut self, ui: &mut Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.add(egui::Slider::new(&mut self.yaw_deg, -180.0_f32..=180.0_f32).text("Yaw (°)"));
-            ui.add(egui::Slider::new(&mut self.pitch_deg, 5.0_f32..=85.0_f32).text("Pitch (°)"));
-            ui.add(egui::Slider::new(&mut self.surface_zoom, 0.4_f32..=2.5_f32).text("Zoom"));
-            ui.add(egui::Slider::new(&mut self.surface_resolution, 12..=44).text("Grid N"));
+            ui.add(
+                egui::Slider::new(&mut self.yaw_deg, -180.0_f32..=180.0_f32).text("Yaw (°)"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.pitch_deg, 5.0_f32..=85.0_f32).text("Pitch (°)"),
+            );
+            ui.add(
+                egui::Slider::new(&mut self.surface_zoom, 0.4_f32..=2.5_f32).text("Zoom"),
+            );
+            ui.add(egui::Slider::new(&mut self.surface_resolution, 12..=40).text("Mesh N"));
             ui.checkbox(&mut self.surface_wireframe_only, "Wireframe Only");
-            if ui.button("Reset Camera").clicked() {
+            if ui.button("Reset View").clicked() {
                 self.yaw_deg = 38.0_f32;
                 self.pitch_deg = 28.0_f32;
                 self.surface_zoom = 1.0_f32;
@@ -2480,28 +2001,39 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
         }
 
         let painter = ui.painter_at(rect);
-        let bg_color = if self.dark_mode {
-            Color32::from_rgb(15, 23, 42)
+        let canvas_bg = if self.dark_mode {
+            Color32::from_rgb(10, 15, 29)
         } else {
             Color32::from_rgb(241, 245, 249)
         };
-        painter.rect_filled(rect, Rounding::same(6.0_f32), bg_color);
+        painter.rect_filled(rect, Rounding::same(6.0_f32), canvas_bg);
 
         let n = self.surface_resolution.max(8);
-        let (x_star, y_star, _, _) = self.solve_constrained_equilibrium();
-        let tfp_a = self.get_param("A", 2.0);
-        let alpha = self.get_param("alpha", 0.45);
-        let beta = self.get_param("beta", 0.55);
-        let max_domain = (x_star.max(y_star) * 2.0).clamp(10.0, 40.0);
+        let (x_star, y_star, _, _) = self.solve_structural_equilibrium();
+        let max_dom = self.domain_max.max(10.0_f64);
+
+        let tfp_a = self.workspace.parameters.get("A").copied().unwrap_or(2.0_f64);
+        let alpha = self
+            .workspace
+            .parameters
+            .get("alpha")
+            .copied()
+            .unwrap_or(0.45_f64);
+        let beta = self
+            .workspace
+            .parameters
+            .get("beta")
+            .copied()
+            .unwrap_or(0.55_f64);
 
         let mut z_grid = vec![vec![0.0_f64; n + 1]; n + 1];
         let mut z_min = f64::INFINITY;
         let mut z_max = f64::NEG_INFINITY;
 
         for (i, row) in z_grid.iter_mut().enumerate() {
-            let x = 0.2 + (max_domain - 0.2) * (i as f64) / (n as f64);
+            let x = 0.2_f64 + (max_dom - 0.2_f64) * (i as f64) / (n as f64);
             for (j, cell) in row.iter_mut().enumerate() {
-                let y = 0.2 + (max_domain - 0.2) * (j as f64) / (n as f64);
+                let y = 0.2_f64 + (max_dom - 0.2_f64) * (j as f64) / (n as f64);
                 let z = tfp_a * x.powf(alpha) * y.powf(beta);
                 *cell = z;
                 if z < z_min {
@@ -2512,14 +2044,12 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                 }
             }
         }
-        let z_span = (z_max - z_min).max(1e-6);
+        let z_span = (z_max - z_min).max(1e-6_f64);
 
         let yaw = self.yaw_deg.to_radians();
         let pitch = self.pitch_deg.to_radians();
-        let cos_y = yaw.cos();
-        let sin_y = yaw.sin();
-        let cos_p = pitch.cos();
-        let sin_p = pitch.sin();
+        let (cos_y, sin_y) = (yaw.cos(), yaw.sin());
+        let (cos_p, sin_p) = (pitch.cos(), pitch.sin());
 
         let scale = (rect.width().min(rect.height()) * 0.36_f32) * self.surface_zoom;
         let center = rect.center() + Vec2::new(0.0_f32, rect.height() * 0.08_f32);
@@ -2535,8 +2065,10 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
             let sy = ry * sin_p - cz * cos_p;
             let depth = ry * cos_p + cz * sin_p;
 
-            let screen_pos = Pos2::new(center.x + sx * scale, center.y + sy * scale);
-            (screen_pos, depth)
+            (
+                Pos2::new(center.x + sx * scale, center.y + sy * scale),
+                depth,
+            )
         };
 
         struct SurfaceQuad {
@@ -2563,13 +2095,10 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
                 let (p2, d2) = project(nx1, ny1, nz11);
                 let (p3, d3) = project(nx0, ny1, nz01);
 
-                let avg_depth = 0.25_f32 * (d0 + d1 + d2 + d3);
-                let avg_nz = 0.25_f32 * (nz00 + nz10 + nz11 + nz01);
-
                 quads.push(SurfaceQuad {
                     pts: [p0, p1, p2, p3],
-                    depth: avg_depth,
-                    norm_z: avg_nz,
+                    depth: 0.25_f32 * (d0 + d1 + d2 + d3),
+                    norm_z: 0.25_f32 * (nz00 + nz10 + nz11 + nz01),
                 });
             }
         }
@@ -2582,74 +2111,454 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
 
         for q in &quads {
             let t = q.norm_z.clamp(0.0_f32, 1.0_f32);
-            let r = (30.0_f32 + 210.0_f32 * t) as u8;
-            let g = (100.0_f32 + 120.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
-            let b = (235.0_f32 - 180.0_f32 * t) as u8;
+            let r = (30.0_f32 + 205.0_f32 * t) as u8;
+            let g = (105.0_f32 + 120.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
+            let b = (240.0_f32 - 180.0_f32 * t) as u8;
 
             if !self.surface_wireframe_only {
-                let fill = Color32::from_rgba_unmultiplied(r, g, b, 210);
                 painter.add(egui::Shape::convex_polygon(
                     q.pts.to_vec(),
-                    fill,
-                    Stroke::new(
-                        0.65_f32,
-                        Color32::from_rgba_unmultiplied(15, 23, 42, 140),
-                    ),
+                    Color32::from_rgba_unmultiplied(r, g, b, 215),
+                    Stroke::new(0.6_f32, Color32::from_rgba_unmultiplied(15, 23, 42, 150)),
                 ));
             } else {
-                let stroke_col = Color32::from_rgb(r, g, b);
                 painter.add(egui::Shape::closed_line(
                     q.pts.to_vec(),
-                    Stroke::new(1.1_f32, stroke_col),
+                    Stroke::new(1.1_f32, Color32::from_rgb(r, g, b)),
                 ));
             }
         }
 
-        let nx_opt = ((x_star / max_domain) as f32).clamp(0.0_f32, 1.0_f32);
-        let ny_opt = ((y_star / max_domain) as f32).clamp(0.0_f32, 1.0_f32);
-        let z_opt = tfp_a * x_star.powf(alpha) * y_star.powf(beta);
+        let nx_opt = ((x_star / max_dom) as f32).clamp(0.0_f32, 1.0_f32);
+        let ny_opt = ((y_star / max_dom) as f32).clamp(0.0_f32, 1.0_f32);
+        let z_opt = tfp_a * x_star.max(1e-4_f64).powf(alpha) * y_star.max(1e-4_f64).powf(beta);
         let nz_opt = (((z_opt - z_min) / z_span) as f32).clamp(0.0_f32, 1.0_f32);
         let (opt_pos, _) = project(nx_opt, ny_opt, nz_opt);
         painter.circle_filled(opt_pos, 6.0_f32, Color32::from_rgb(34, 197, 94));
         painter.circle_stroke(opt_pos, 6.0_f32, Stroke::new(2.0_f32, Color32::WHITE));
 
         painter.text(
-            rect.left_top() + Vec2::new(14.0_f32, 12.0_f32),
+            rect.left_top() + Vec2::new(14.0_f32, 10.0_f32),
             egui::Align2::LEFT_TOP,
             format!(
-                "Surface Z(x,y) = {:.2} * x^{:.2} * y^{:.2} | Equilibrium ({:.2}, {:.2}, Z*={:.2}) — Drag to Rotate",
+                "3D Surface Z(x,y) = {:.2} * x^{:.2} * y^{:.2} | Tangency ({:.2}, {:.2}, Z*={:.2})",
                 tfp_a, alpha, beta, x_star, y_star, z_opt
             ),
             FontId::monospace(12.5_f32),
             Color32::from_rgb(125, 211, 252),
         );
     }
+
+    fn render_bottom_code_editor(&mut self, ui: &mut Ui) {
+        // Tab Selector Bar
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                RichText::new("2B. IDE Editor & Diagnostics")
+                    .font(FontId::proportional(15.0_f32))
+                    .strong()
+                    .color(Color32::from_rgb(56, 189, 248)),
+            );
+            ui.separator();
+            ui.selectable_value(
+                &mut self.bottom_tab,
+                BottomEditorTab::CommandEditor,
+                RichText::new("1. Command Editor").strong(),
+            );
+            ui.selectable_value(
+                &mut self.bottom_tab,
+                BottomEditorTab::ConsoleLog,
+                RichText::new(format!("2. Console Log ({})", self.console_logs.len())).strong(),
+            );
+            ui.selectable_value(
+                &mut self.bottom_tab,
+                BottomEditorTab::LatexDerivation,
+                RichText::new("3. LaTeX Derivation").strong(),
+            );
+            ui.selectable_value(
+                &mut self.bottom_tab,
+                BottomEditorTab::RScriptPreview,
+                RichText::new("4. R Script Preview").strong(),
+            );
+        });
+
+        ui.separator();
+
+        match self.bottom_tab {
+            BottomEditorTab::CommandEditor => {
+                // Action Bar: Run / Evaluate button + Insert Snippet dropdown
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("▶ Run / Evaluate")
+                                .font(FontId::proportional(13.5_f32))
+                                .strong()
+                                .color(Color32::from_rgb(74, 222, 128)),
+                        )
+                        .on_hover_text(
+                            "Parses `name = value` parameters and `f(x) = expr` functions, stripping LaTeX slashes for meval.",
+                        )
+                        .clicked()
+                    {
+                        self.evaluate_editor_script();
+                    }
+
+                    ui.separator();
+                    ui.label(
+                        RichText::new("Insert Snippet:")
+                            .strong()
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    );
+
+                    let prev_snippet = self.selected_snippet;
+                    egui::ComboBox::from_id_source("insert_snippet_dropdown")
+                        .selected_text(self.selected_snippet.label())
+                        .show_ui(ui, |ui| {
+                            for snip in SnippetTemplate::all() {
+                                ui.selectable_value(&mut self.selected_snippet, snip, snip.label());
+                            }
+                        });
+
+                    if self.selected_snippet != prev_snippet
+                        || ui.button("Paste Snippet").clicked()
+                    {
+                        self.active_model = self.selected_snippet.model_kind();
+                        self.editor_script = self.selected_snippet.script_text().to_string();
+                        self.workspace.parameters.clear();
+                        self.workspace.functions.clear();
+                        self.evaluate_editor_script();
+                    }
+
+                    ui.separator();
+                    ui.label(
+                        RichText::new("Syntax: `\\alpha = 0.5`, `f(x) = \\alpha * x^2 + 3`")
+                            .font(FontId::monospace(11.5_f32))
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                });
+
+                ui.add_space(4.0_f32);
+
+                egui::ScrollArea::vertical()
+                    .id_source("command_editor_scroll")
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            ui.available_size(),
+                            egui::TextEdit::multiline(&mut self.editor_script)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .desired_rows(10)
+                                .hint_text(
+                                    "# Type symbolic parameters and functions:\n\\alpha = 0.5\nf(x) = \\alpha * x^2 + 3",
+                                ),
+                        );
+                    });
+            }
+            BottomEditorTab::ConsoleLog => {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Execution & Parser Logs")
+                            .strong()
+                            .color(Color32::from_rgb(148, 163, 184)),
+                    );
+                    if ui.small_button("Clear Log").clicked() {
+                        self.console_logs.clear();
+                    }
+                });
+                ui.add_space(4.0_f32);
+
+                egui::ScrollArea::vertical()
+                    .id_source("console_log_scroll")
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for entry in &self.console_logs {
+                            let tag_color = if entry.is_error {
+                                Color32::from_rgb(248, 113, 113)
+                            } else {
+                                Color32::from_rgb(56, 189, 248)
+                            };
+                            let msg_color = if entry.is_error {
+                                Color32::from_rgb(252, 165, 165)
+                            } else {
+                                Color32::from_rgb(203, 213, 225)
+                            };
+
+                            ui.horizontal_wrapped(|ui| {
+                                ui.monospace(
+                                    RichText::new(format!("[{}]", entry.timestamp_tag))
+                                        .strong()
+                                        .color(tag_color),
+                                );
+                                ui.monospace(
+                                    RichText::new(format!("`{}` →", entry.source_line))
+                                        .color(Color32::from_rgb(148, 163, 184)),
+                                );
+                                ui.monospace(RichText::new(&entry.message).color(msg_color));
+                            });
+                        }
+                    });
+            }
+            BottomEditorTab::LatexDerivation => {
+                let mut latex_str = self.generate_latex_derivation();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("Copy LaTeX / TikZ to Clipboard")
+                                .strong()
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(latex_str.clone());
+                        self.status_banner =
+                            "Copied auto-generated LaTeX & TikZ derivation to clipboard."
+                                .to_string();
+                    }
+                });
+                ui.add_space(4.0_f32);
+                egui::ScrollArea::vertical()
+                    .id_source("latex_derivation_scroll")
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            ui.available_size(),
+                            egui::TextEdit::multiline(&mut latex_str)
+                                .code_editor()
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+            }
+            BottomEditorTab::RScriptPreview => {
+                let mut r_script_str = self.generate_r_script_preview();
+                ui.horizontal(|ui| {
+                    if ui
+                        .button(
+                            RichText::new("Copy model_analysis.R to Clipboard")
+                                .strong()
+                                .color(Color32::from_rgb(125, 211, 252)),
+                        )
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(r_script_str.clone());
+                        self.status_banner =
+                            "Copied model_analysis.R tidyverse script to clipboard.".to_string();
+                    }
+                });
+                ui.add_space(4.0_f32);
+                egui::ScrollArea::vertical()
+                    .id_source("r_script_preview_scroll")
+                    .show(ui, |ui| {
+                        ui.add_sized(
+                            ui.available_size(),
+                            egui::TextEdit::multiline(&mut r_script_str)
+                                .code_editor()
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+            }
+        }
+    }
+
+    // =========================================================================
+    // 3. RIGHT PANEL: "Data & Docs" (Split Top/Bottom)
+    // =========================================================================
+    fn render_right_data_docs_panel(&mut self, ui: &mut Ui) {
+        let total_height = ui.available_height();
+        let top_data_height = (total_height * 0.54_f32).max(220.0_f32);
+
+        // --- TOP RIGHT: Tabbed Data Viewer (Simulation Grid & CSV Pasteboard) ---
+        ui.allocate_ui(Vec2::new(ui.available_width(), top_data_height), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    RichText::new("3A. Data Viewer")
+                        .font(FontId::proportional(15.0_f32))
+                        .strong()
+                        .color(Color32::from_rgb(56, 189, 248)),
+                );
+                ui.separator();
+                ui.selectable_value(
+                    &mut self.right_data_tab,
+                    RightDataTab::SimulationGrid,
+                    RichText::new("Tab A: Simulation Grid (50 rows)").strong(),
+                );
+                ui.selectable_value(
+                    &mut self.right_data_tab,
+                    RightDataTab::CsvPasteboard,
+                    RichText::new("Tab B: CSV Pasteboard").strong(),
+                );
+            });
+            ui.separator();
+
+            match self.right_data_tab {
+                RightDataTab::SimulationGrid => {
+                    let rows = self.build_simulation_grid(50);
+                    let mut fn_keys = self.workspace.functions.keys();
+                    let col1_name = fn_keys.next().map(|s| s.as_str()).unwrap_or("f(x)");
+                    let col2_name = fn_keys.next().map(|s| s.as_str()).unwrap_or("g(x)");
+
+                    egui::ScrollArea::vertical()
+                        .id_source("right_sim_grid_scroll")
+                        .show(ui, |ui| {
+                            egui::Grid::new("right_50_row_sim_grid")
+                                .striped(true)
+                                .spacing([12.0_f32, 4.0_f32])
+                                .show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new("#")
+                                            .strong()
+                                            .color(Color32::from_rgb(148, 163, 184)),
+                                    );
+                                    ui.label(
+                                        RichText::new("x")
+                                            .strong()
+                                            .color(Color32::from_rgb(56, 189, 248)),
+                                    );
+                                    ui.label(
+                                        RichText::new(col1_name)
+                                            .strong()
+                                            .color(Color32::from_rgb(56, 189, 248)),
+                                    );
+                                    ui.label(
+                                        RichText::new(col2_name)
+                                            .strong()
+                                            .color(Color32::from_rgb(249, 115, 22)),
+                                    );
+                                    ui.label(
+                                        RichText::new("f'(x)")
+                                            .strong()
+                                            .color(Color32::from_rgb(168, 85, 247)),
+                                    );
+                                    ui.end_row();
+
+                                    for r in &rows {
+                                        ui.monospace(format!("{:02}", r.index));
+                                        ui.monospace(format!("{:.3}", r.x));
+                                        ui.monospace(format!("{:.4}", r.primary_y));
+                                        ui.monospace(format!("{:.4}", r.secondary_y));
+                                        ui.monospace(format!("{:.4}", r.marginal_or_slope));
+                                        ui.end_row();
+                                    }
+                                });
+                        });
+                }
+                RightDataTab::CsvPasteboard => {
+                    let pts = self.parse_csv_scratchpad_points();
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("Parsed {} (x, y) rows", pts.len()))
+                                .font(FontId::monospace(11.5_f32))
+                                .color(Color32::from_rgb(52, 211, 153)),
+                        );
+                        if let Some((b1, b0, r2)) = self.compute_csv_ols(&pts) {
+                            ui.label(
+                                RichText::new(format!(
+                                    "| OLS: y={:.2}x+{:.2} (R²={:.3})",
+                                    b1, b0, r2
+                                ))
+                                .font(FontId::monospace(11.5_f32))
+                                .color(Color32::from_rgb(250, 204, 21)),
+                            );
+                        }
+                    });
+                    ui.add_space(4.0_f32);
+                    egui::ScrollArea::vertical()
+                        .id_source("csv_pasteboard_scroll")
+                        .show(ui, |ui| {
+                            ui.add_sized(
+                                ui.available_size(),
+                                egui::TextEdit::multiline(&mut self.workspace.csv_scratchpad)
+                                    .code_editor()
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text("Paste raw `x,y` CSV data from Excel or R..."),
+                            );
+                        });
+                }
+            }
+        });
+
+        ui.add_space(4.0_f32);
+        ui.separator();
+
+        // --- BOTTOM RIGHT: Markdown Notes & Positron / Quarto Export Pipeline ---
+        ui.label(
+            RichText::new("3B. Theoretical Markdown Notes & Positron Export")
+                .font(FontId::proportional(15.0_f32))
+                .strong()
+                .color(Color32::from_rgb(56, 189, 248)),
+        );
+        ui.add_space(4.0_f32);
+
+        let notes_height = (ui.available_height() - 78.0_f32).max(80.0_f32);
+        egui::ScrollArea::vertical()
+            .id_source("markdown_notes_scroll")
+            .max_height(notes_height)
+            .show(ui, |ui| {
+                ui.add_sized(
+                    Vec2::new(ui.available_width(), notes_height),
+                    egui::TextEdit::multiline(&mut self.workspace.markdown_notes)
+                        .desired_width(f32::INFINITY)
+                        .hint_text(
+                            "Write theoretical interpretations, intuition, and derivations here (bundled into Quarto/RMarkdown report)...",
+                        ),
+                );
+            });
+
+        ui.add_space(6.0_f32);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Format:").strong());
+            ui.selectable_value(
+                &mut self.report_format,
+                ReportFormat::QuartoQmd,
+                ReportFormat::QuartoQmd.label(),
+            );
+            ui.selectable_value(
+                &mut self.report_format,
+                ReportFormat::RMarkdownRmd,
+                ReportFormat::RMarkdownRmd.label(),
+            );
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button(
+                    RichText::new("🚀 Export Quarto/R & Launch Positron")
+                        .font(FontId::proportional(13.5_f32))
+                        .strong()
+                        .color(Color32::from_rgb(74, 222, 128)),
+                )
+                .on_hover_text(
+                    "Exports project.Rproj, simulation_data.csv, model_analysis.R, and report.qmd/.Rmd (with Markdown Notes) and opens Positron IDE.",
+                )
+                .clicked()
+            {
+                self.trigger_export_pipeline();
+            }
+        });
+    }
 }
 
 impl eframe::App for EconCalcApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("ide_top_menu_bar").show(ctx, |ui| {
-            self.render_top_menu_bar(ui);
+        egui::TopBottomPanel::top("positron_top_header").show(ctx, |ui| {
+            self.render_top_header(ui);
         });
 
-        egui::SidePanel::left("vscode_activity_and_sidebar")
+        egui::SidePanel::left("symbolic_environment_left_panel")
             .resizable(true)
-            .default_width(265.0_f32)
-            .min_width(185.0_f32)
+            .default_width(320.0_f32)
+            .min_width(250.0_f32)
             .show(ctx, |ui| {
-                self.render_left_activity_and_sidebar(ui);
+                self.render_left_symbolic_panel(ui);
             });
 
-        egui::SidePanel::right("rstudio_environment_and_grid_pane")
+        egui::SidePanel::right("data_docs_right_panel")
             .resizable(true)
             .default_width(370.0_f32)
             .min_width(280.0_f32)
             .show(ctx, |ui| {
-                self.render_right_environment_pane(ui);
+                self.render_right_data_docs_panel(ui);
             });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_center_workspace(ui);
+            self.render_center_panel(ui);
         });
     }
 }
