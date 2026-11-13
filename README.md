@@ -167,3 +167,7 @@ Before submitting a pull request, please ensure:
 * Avoid `.unwrap()` / `.expect()` in production paths unless an invariant is strictly guaranteed and documented.
 
 ---
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
