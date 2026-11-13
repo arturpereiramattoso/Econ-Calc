@@ -4,6 +4,10 @@ Thank you for your interest in helping build **Econ-Calc**! Because our core pro
 
 ---
 
+## Fair Warning: I, Artur, am alone in this project and with near zero coding skills, therefore the entire code until now is made with Gemini 4 Argon.
+
+---
+
 ## Core Rules for All Contributions
 
 1. **Protect Tier 1 (Universal Lite Core):**
