@@ -5,18 +5,12 @@ mod exporter;
 
 use app::EconCalcApp;
 use eframe::egui;
-use exporter::ARCH_SHORT_LABEL;
 
 fn main() -> eframe::Result<()> {
-    let window_title = format!(
-        "econ-calc — Positron Computational Economics & Mathematical IDE ({})",
-        ARCH_SHORT_LABEL
-    );
-
     let viewport = egui::ViewportBuilder::default()
-        .with_title(window_title)
-        .with_inner_size([1520.0, 920.0])
-        .with_min_inner_size([1080.0, 680.0]);
+        .with_title("EconCalc Studio")
+        .with_inner_size([1280.0, 780.0])
+        .with_min_inner_size([800.0, 520.0]);
 
     let native_options = eframe::NativeOptions {
         viewport,
