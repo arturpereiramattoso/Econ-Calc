@@ -9,8 +9,8 @@ use eframe::egui;
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
         .with_title("EconCalc Studio")
-        .with_inner_size([1280.0, 780.0])
-        .with_min_inner_size([800.0, 520.0]);
+        .with_inner_size([1280.0_f32, 780.0_f32])
+        .with_min_inner_size([800.0_f32, 520.0_f32]);
 
     let native_options = eframe::NativeOptions {
         viewport,
