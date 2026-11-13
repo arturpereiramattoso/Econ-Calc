@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -8,7 +8,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(target_arch = "aarch64")]
 pub const ARCH_SHORT_LABEL: &str = "ARM64 Snapdragon";
 #[cfg(target_arch = "aarch64")]
-pub const ARCH_FULL_LABEL: &str = "Windows 11 ARM64 (Qualcomm Snapdragon / aarch64-pc-windows-msvc)";
+pub const ARCH_FULL_LABEL: &str =
+    "Windows 11 ARM64 (Qualcomm Snapdragon / aarch64-pc-windows-msvc)";
 
 #[cfg(target_arch = "x86_64")]
 pub const ARCH_SHORT_LABEL: &str = "x64 Intel/AMD";
@@ -20,10 +21,11 @@ pub const ARCH_SHORT_LABEL: &str = std::env::consts::ARCH;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 pub const ARCH_FULL_LABEL: &str = std::env::consts::ARCH;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReportFormat {
     QuartoQmd,
     RMarkdownRmd,
+    MarkdownMd,
 }
 
 impl ReportFormat {
@@ -31,6 +33,7 @@ impl ReportFormat {
         match self {
             ReportFormat::QuartoQmd => "qmd",
             ReportFormat::RMarkdownRmd => "Rmd",
+            ReportFormat::MarkdownMd => "md",
         }
     }
 
@@ -38,11 +41,12 @@ impl ReportFormat {
         match self {
             ReportFormat::QuartoQmd => "Quarto (.qmd)",
             ReportFormat::RMarkdownRmd => "R Markdown (.Rmd)",
+            ReportFormat::MarkdownMd => "Markdown (.md)",
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ActiveModelKind {
     CustomExpression,
     CobbDouglas,
@@ -53,7 +57,9 @@ pub enum ActiveModelKind {
 impl ActiveModelKind {
     pub fn title(self) -> &'static str {
         match self {
-            ActiveModelKind::CustomExpression => "Custom Mathematical Expression & Numerical Calculus",
+            ActiveModelKind::CustomExpression => {
+                "Custom Mathematical Expression & Numerical Calculus"
+            }
             ActiveModelKind::CobbDouglas => "Cobb-Douglas Production & Isoquant Analysis",
             ActiveModelKind::ConstrainedUtility => "Lagrangian Constrained Utility Maximization",
             ActiveModelKind::GameTheory2x2 => "2x2 Normal-Form Game Theory Equilibrium Solver",
@@ -61,7 +67,7 @@ impl ActiveModelKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GridRow {
     pub index: usize,
     pub x: f64,
@@ -100,8 +106,62 @@ pub struct ExportOutcome {
     pub status_message: String,
 }
 
-/// Converts UNIX timestamp seconds into `(year, month, day, hour, minute, second)` in UTC
-/// using Howard Hinnant's civil-from-days algorithm in pure Rust.
+#[derive(Debug, Clone)]
+pub struct ProjectFileEntry {
+    pub name: String,
+    pub path: PathBuf,
+    pub is_dir: bool,
+    pub size_bytes: u64,
+}
+
+/// Lists files in a project directory safely without blocking on deep trees.
+pub fn list_project_directory(dir: &Path) -> Vec<ProjectFileEntry> {
+    let mut entries = Vec::new();
+    let Ok(read_dir) = fs::read_dir(dir) else {
+        return entries;
+    };
+
+    for item in read_dir.flatten() {
+        let path = item.path();
+        let name = item.file_name().to_string_lossy().to_string();
+        if name.starts_with('.') || name == "target" {
+            continue;
+        }
+        let metadata = item.metadata().ok();
+        let is_dir = metadata.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+        let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        entries.push(ProjectFileEntry {
+            name,
+            path,
+            is_dir,
+            size_bytes,
+        });
+    }
+
+    entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
+    entries
+}
+
+/// Saves arbitrary text content (Markdown, Quarto, RMarkdown, R script, or CSV) to a path.
+pub fn save_text_file(path: &Path, content: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
+        }
+    }
+    let mut file =
+        File::create(path).map_err(|e| format!("Failed to create {:?}: {}", path, e))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("Failed to write {:?}: {}", path, e))
+}
+
+/// Reads a text file (Markdown, Quarto, RMarkdown, R script, or CSV) from disk.
+pub fn load_text_file(path: &Path) -> Result<String, String> {
+    fs::read_to_string(path).map_err(|e| format!("Failed to read {:?}: {}", path, e))
+}
+
+/// Converts UNIX timestamp seconds into `(year, month, day, hour, minute, second)` in UTC.
 fn utc_timestamp_parts() -> (i32, u32, u32, u32, u32, u32) {
     let total_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -139,24 +199,19 @@ pub fn export_and_launch_positron(payload: &ExportPayload) -> Result<ExportOutco
     fs::create_dir_all(&export_dir)
         .map_err(|e| format!("Failed to create export directory {:?}: {}", export_dir, e))?;
 
-    // 1. Write project.Rproj
     let rproj_path = export_dir.join("project.Rproj");
     write_rproj_file(&rproj_path)?;
 
-    // 2. Write simulation_data.csv via the `csv` crate
     let csv_path = export_dir.join("simulation_data.csv");
     write_simulation_csv(&csv_path, &payload.grid_rows)?;
 
-    // 3. Write model_analysis.R
     let r_script_path = export_dir.join("model_analysis.R");
     write_r_analysis_script(&r_script_path, payload)?;
 
-    // 4. Write report.qmd or report.Rmd
     let report_filename = format!("report.{}", payload.report_format.extension());
     let report_path = export_dir.join(report_filename);
     write_literate_report(&report_path, payload)?;
 
-    // 5. Launch Positron IDE or fallback to Windows Explorer
     let (launched_program, status_message) = launch_workspace_viewer(&export_dir);
 
     Ok(ExportOutcome {
@@ -182,13 +237,10 @@ Encoding: UTF-8
 RnwWeave: knitr
 LaTeX: pdfLaTeX
 ";
-    let mut file = File::create(path)
-        .map_err(|e| format!("Could not create {:?}: {}", path, e))?;
-    file.write_all(content.as_bytes())
-        .map_err(|e| format!("Could not write {:?}: {}", path, e))
+    save_text_file(path, content)
 }
 
-fn write_simulation_csv(path: &Path, rows: &[GridRow]) -> Result<(), String> {
+pub fn write_simulation_csv(path: &Path, rows: &[GridRow]) -> Result<(), String> {
     let mut wtr = csv::Writer::from_path(path)
         .map_err(|e| format!("Failed to initialize CSV writer at {:?}: {}", path, e))?;
 
@@ -204,19 +256,16 @@ fn write_simulation_csv(path: &Path, rows: &[GridRow]) -> Result<(), String> {
 fn write_r_analysis_script(path: &Path, payload: &ExportPayload) -> Result<(), String> {
     let script = format!(
         r##"# ==============================================================================
-# econ-calc Reproducible Analysis Script for Posit Positron IDE
+# EconCalc Studio — Reproducible Analysis Script for Positron / RStudio
 # Active Model: {model_title}
-# Target Architecture: {arch_full}
 # ==============================================================================
 
 suppressPackageStartupMessages({{
   library(tidyverse)
 }})
 
-# Load exported numerical simulation grid
 sim_data <- read_csv("simulation_data.csv", show_col_types = FALSE)
 
-# Active structural parameters exported from econ-calc
 params <- tibble(
   A = {tfp_a:.6},
   alpha = {alpha:.6},
@@ -234,7 +283,6 @@ params <- tibble(
 print(params)
 glimpse(sim_data)
 
-# Generate primary publication-quality ggplot2 figure
 p_main <- ggplot(sim_data, aes(x = x)) +
   geom_line(aes(y = primary_y, color = "Primary Curve"), linewidth = 1.15) +
   geom_line(aes(y = secondary_y, color = "Secondary / Constraint"), linewidth = 0.95, linetype = "dashed") +
@@ -257,9 +305,8 @@ p_main <- ggplot(sim_data, aes(x = x)) +
       "Equilibrium: x* = %.4f, y* = %.4f | alpha = %.3f, beta = %.3f",
       params$x_star, params$y_star, params$alpha, params$beta
     ),
-    x = "x (Input L / Good X)",
-    y = "y (Input K / Good Y / f(x))",
-    caption = "Generated natively by econ-calc ({arch_short})"
+    x = "x",
+    y = "y"
   ) +
   theme_minimal(base_size = 13) +
   theme(
@@ -271,8 +318,6 @@ print(p_main)
 ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 300)
 "##,
         model_title = payload.model_kind.title(),
-        arch_full = ARCH_FULL_LABEL,
-        arch_short = ARCH_SHORT_LABEL,
         tfp_a = payload.tfp_a,
         alpha = payload.alpha,
         beta = payload.beta,
@@ -286,70 +331,60 @@ ggsave("equilibrium_plot.png", plot = p_main, width = 8.5, height = 5.5, dpi = 3
         indirect_utility = payload.indirect_utility,
     );
 
-    let mut file = File::create(path)
-        .map_err(|e| format!("Could not create R script {:?}: {}", path, e))?;
-    file.write_all(script.as_bytes())
-        .map_err(|e| format!("Could not write R script {:?}: {}", path, e))
+    save_text_file(path, &script)
 }
 
 fn write_literate_report(path: &Path, payload: &ExportPayload) -> Result<(), String> {
     let yaml_header = match payload.report_format {
         ReportFormat::QuartoQmd => format!(
-            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc {})\"\nformat:\n  html:\n    toc: true\n    code-fold: false\n    theme: cosmo\nexecute:\n  echo: true\n  warning: false\n---\n",
-            payload.model_kind.title(),
-            ARCH_SHORT_LABEL
+            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Report\"\nformat:\n  html:\n    toc: true\n    code-fold: false\n    theme: cosmo\nexecute:\n  echo: true\n  warning: false\n---\n",
+            payload.model_kind.title()
         ),
         ReportFormat::RMarkdownRmd => format!(
-            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Economics Report (econ-calc {})\"\noutput:\n  html_document:\n    toc: true\n    theme: flatly\n---\n",
-            payload.model_kind.title(),
-            ARCH_SHORT_LABEL
+            "---\ntitle: \"{}\"\nsubtitle: \"Reproducible Computational Report\"\noutput:\n  html_document:\n    toc: true\n    theme: flatly\n---\n",
+            payload.model_kind.title()
         ),
+        ReportFormat::MarkdownMd => format!("# {}\n\n", payload.model_kind.title()),
     };
 
     let report_body = format!(
         r##"{yaml_header}
-## 1. Structural Specification & Analytical Derivation
-
-The active workspace in `econ-calc` ({arch_full}) evaluated the **{model_title}** template. Below is the exact symbolic and numerical specification exported from the IDE:
+## 1. Specification & Analytical Notes
 
 {latex_block}
 
-## 2. Structural Parameter Environment
+## 2. Parameter Summary
 
 | Parameter | Symbol | Value |
 |:---|:---|---:|
 | Total Factor Productivity | $A$ | `{tfp_a:.4}` |
-| Output / Utility Elasticity 1 | $\alpha$ | `{alpha:.4}` |
-| Output / Utility Elasticity 2 | $\beta$ | `{beta:.4}` |
-| Price of Good $x$ (or Wage $w$) | $P_x$ | `{price_x:.4}` |
-| Price of Good $y$ (or Rental $r$) | $P_y$ | `{price_y:.4}` |
-| Budget / Endowment Income | $I$ | `{income:.4}` |
-| Target Isoquant Output | $\bar{{Y}}$ | `{target_output:.4}` |
+| Elasticity 1 | $\alpha$ | `{alpha:.4}` |
+| Elasticity 2 | $\beta$ | `{beta:.4}` |
+| Price $x$ | $P_x$ | `{price_x:.4}` |
+| Price $y$ | $P_y$ | `{price_y:.4}` |
+| Income / Endowment | $I$ | `{income:.4}` |
+| Target Output | $\bar{{Y}}$ | `{target_output:.4}` |
 | Optimal $x^*$ | $x^*$ | `{x_star:.6}` |
 | Optimal $y^*$ | $y^*$ | `{y_star:.6}` |
-| Shadow Price / Multiplier | $\lambda^*$ | `{lambda_star:.6}` |
-| Indirect Utility / Objective | $V^*$ | `{indirect_utility:.6}` |
+| Multiplier $\lambda^*$ | $\lambda^*$ | `{lambda_star:.6}` |
+| Indirect Utility $V^*$ | $V^*$ | `{indirect_utility:.6}` |
 
-### 2x2 Normal-Form Game / Workspace Summary
+### Notes & Data Summary
 
 ```text
 {game_summary}
 ```
 
-## 3. Reproducible R Analysis & Visualization
+## 3. Reproducible R Script
 
 ```r
 library(tidyverse)
-
 sim_data <- read_csv("simulation_data.csv", show_col_types = FALSE)
 head(sim_data, 10)
-
 source("model_analysis.R")
 ```
 "##,
         yaml_header = yaml_header,
-        arch_full = ARCH_FULL_LABEL,
-        model_title = payload.model_kind.title(),
         latex_block = payload.latex_derivation,
         tfp_a = payload.tfp_a,
         alpha = payload.alpha,
@@ -365,14 +400,10 @@ source("model_analysis.R")
         game_summary = payload.game_summary,
     );
 
-    let mut file = File::create(path)
-        .map_err(|e| format!("Could not create report {:?}: {}", path, e))?;
-    file.write_all(report_body.as_bytes())
-        .map_err(|e| format!("Could not write report {:?}: {}", path, e))
+    save_text_file(path, &report_body)
 }
 
 fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
-    // Primary attempt: launch Posit's Positron IDE directly on the workspace directory
     if let Ok(child) = Command::new("positron").arg(export_dir).spawn() {
         return (
             "positron".to_string(),
@@ -383,7 +414,6 @@ fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
             ),
         );
     }
-    // Windows cmd/shim fallback (positron.cmd)
     if cfg!(target_os = "windows") {
         if let Ok(child) = Command::new("cmd")
             .args(["/C", "positron"])
@@ -400,12 +430,11 @@ fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
             );
         }
     }
-    // Fallback to Windows Explorer on Windows
     if let Ok(child) = Command::new("explorer").arg(export_dir).spawn() {
         return (
             "explorer.exe".to_string(),
             format!(
-                "positron not found on PATH; opened folder in Windows Explorer (PID {}) at {:?}",
+                "positron not found on PATH; opened folder in Explorer (PID {}) at {:?}",
                 child.id(),
                 export_dir
             ),
@@ -413,9 +442,6 @@ fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
     }
     (
         "filesystem-only".to_string(),
-        format!(
-            "Exported reproducible bundle to {:?} (positron and explorer unavailable in current environment)",
-            export_dir
-        ),
+        format!("Exported bundle to {:?}", export_dir),
     )
 }
