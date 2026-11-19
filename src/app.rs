@@ -1049,6 +1049,146 @@ impl EconCalcApp {
         s.trim().to_string()
     }
 
+    fn insert_implicit_multiplication(expr: &str) -> String {
+        #[derive(Clone, Copy, PartialEq)]
+        enum TokenKind {
+            Number,
+            Identifier,
+            OpenParen,
+            CloseParen,
+            Other,
+        }
+
+        let chars: Vec<char> = expr.chars().collect();
+        let mut tokens: Vec<(TokenKind, String)> = Vec::new();
+        let mut i = 0;
+
+        while i < chars.len() {
+            let ch = chars[i];
+            if ch.is_whitespace() {
+                i += 1;
+                continue;
+            }
+
+            if ch.is_ascii_digit()
+                || (ch == '.'
+                    && chars
+                        .get(i + 1)
+                        .map(|c| c.is_ascii_digit())
+                        .unwrap_or(false))
+            {
+                let mut text = String::new();
+                let mut has_decimal = false;
+                while i < chars.len() {
+                    if chars[i].is_ascii_digit() {
+                        text.push(chars[i]);
+                        i += 1;
+                    } else if chars[i] == '.' && !has_decimal {
+                        has_decimal = true;
+                        text.push(chars[i]);
+                        i += 1;
+                    } else {
+                        break;
+                    }
+                }
+
+                if i < chars.len() && matches!(chars[i], 'e' | 'E') {
+                    let mut exponent_end = i + 1;
+                    if exponent_end < chars.len() && matches!(chars[exponent_end], '+' | '-') {
+                        exponent_end += 1;
+                    }
+                    let digits_start = exponent_end;
+                    while exponent_end < chars.len() && chars[exponent_end].is_ascii_digit() {
+                        exponent_end += 1;
+                    }
+                    if exponent_end > digits_start {
+                        text.extend(chars[i..exponent_end].iter());
+                        i = exponent_end;
+                    }
+                }
+                tokens.push((TokenKind::Number, text));
+                continue;
+            }
+
+            if ch.is_alphabetic() || ch == '_' {
+                let start = i;
+                i += 1;
+                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
+                tokens.push((TokenKind::Identifier, chars[start..i].iter().collect()));
+                continue;
+            }
+
+            let kind = match ch {
+                '(' => TokenKind::OpenParen,
+                ')' => TokenKind::CloseParen,
+                _ => TokenKind::Other,
+            };
+            tokens.push((kind, ch.to_string()));
+            i += 1;
+        }
+
+        let is_function = |name: &str| {
+            matches!(
+                name,
+                "abs"
+                    | "acos"
+                    | "acosh"
+                    | "asin"
+                    | "asinh"
+                    | "atan"
+                    | "atanh"
+                    | "atan2"
+                    | "cbrt"
+                    | "ceil"
+                    | "cos"
+                    | "cosh"
+                    | "exp"
+                    | "floor"
+                    | "ln"
+                    | "log"
+                    | "log10"
+                    | "log2"
+                    | "max"
+                    | "min"
+                    | "round"
+                    | "signum"
+                    | "sin"
+                    | "sinh"
+                    | "sqrt"
+                    | "tan"
+                    | "tanh"
+                    | "sec"
+                    | "csc"
+                    | "cot"
+            )
+        };
+        let mut result = String::with_capacity(expr.len() + tokens.len());
+        let mut previous: Option<(TokenKind, &str)> = None;
+        for (kind, text) in &tokens {
+            if let Some((previous_kind, previous_text)) = previous {
+                let left_is_value = matches!(
+                    previous_kind,
+                    TokenKind::Number | TokenKind::Identifier | TokenKind::CloseParen
+                );
+                let right_starts_value = matches!(
+                    kind,
+                    TokenKind::Number | TokenKind::Identifier | TokenKind::OpenParen
+                );
+                let is_function_call = previous_kind == TokenKind::Identifier
+                    && *kind == TokenKind::OpenParen
+                    && is_function(previous_text);
+                if left_is_value && right_starts_value && !is_function_call {
+                    result.push('*');
+                }
+            }
+            result.push_str(text);
+            previous = Some((*kind, text));
+        }
+        result
+    }
+
     /// Safely expands workspace function references with cycle protection and length cap.
     fn expand_workspace_functions(&self, expr_str: &str) -> String {
         let mut expanded = Self::sanitize_for_meval(expr_str);
@@ -1083,7 +1223,7 @@ impl EconCalcApp {
                 break;
             }
         }
-        expanded
+        Self::insert_implicit_multiplication(&expanded)
     }
 
     pub fn replace_identifier_token(expr: &str, ident: &str, replacement: &str) -> String {
@@ -1153,7 +1293,7 @@ impl EconCalcApp {
 
     fn eval_parameter_rhs(&self, expr_str: &str) -> Result<f64, String> {
         let ctx = self.build_meval_context(0.0_f64, 0.0_f64);
-        let clean = Self::sanitize_for_meval(expr_str);
+        let clean = Self::insert_implicit_multiplication(&Self::sanitize_for_meval(expr_str));
         meval::eval_str_with_context(&clean, &ctx).map_err(|e| e.to_string())
     }
 
@@ -2506,6 +2646,8 @@ print(p_main)
 === GENERAL-HELP: Quick Math, R Commands, Desmos & LaTeX Syntax ===
 1. QUICK MATH (No formula required — type directly in Console):
    • `2 + 2 * 5`            -> 12
+   • `2x`, `2(x + 1)`       Implicit multiplication: 2*x and 2*(x + 1)
+   • `(x + 1)(x - 1)`       Adjacent parenthesized terms are multiplied
    • `sqrt(144) + e^2`      -> 19.389056
    • `sin(pi / 4)`          -> 0.707107
    • `log(100, 10)`         -> 2
@@ -4953,6 +5095,33 @@ mod tests {
 
         let val_e = app.eval_expression_str("e^x", 1.0_f64, 0.0_f64).unwrap();
         assert!((val_e - std::f64::consts::E).abs() < 1e-9_f64);
+        assert_eq!(
+            app.eval_expression_str("2x", 3.0_f64, 0.0_f64).unwrap(),
+            6.0_f64
+        );
+        assert_eq!(
+            app.eval_expression_str("2(x + 1)", 3.0_f64, 0.0_f64)
+                .unwrap(),
+            8.0_f64
+        );
+        assert_eq!(
+            app.eval_expression_str("(x + 1)(x - 1)", 3.0_f64, 0.0_f64)
+                .unwrap(),
+            8.0_f64
+        );
+        assert_eq!(
+            app.eval_expression_str("x(x + 1)", 3.0_f64, 0.0_f64)
+                .unwrap(),
+            12.0_f64
+        );
+        assert_eq!(
+            app.eval_expression_str("2e3x", 3.0_f64, 0.0_f64).unwrap(),
+            6000.0_f64
+        );
+        assert!(
+            (app.eval_expression_str("sin(x)", 1.0_f64, 0.0_f64).unwrap() - 1.0_f64.sin()).abs()
+                < 1e-9_f64
+        );
 
         let branches =
             app.sample_function_branches("1 / x", -5.0_f64, 5.0_f64, -10.0_f64, 10.0_f64, 201);

@@ -1,0 +1,19 @@
+debug/
+target/
+
+**/*.rs.bk
+
+*.pdb
+
+.env
+
+# VS Code local workspace files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+
+.DS_Store
+Thumbs.db
