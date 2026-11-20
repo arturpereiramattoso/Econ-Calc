@@ -1,7 +1,14 @@
+pub use crate::collections::IndexMap;
 use crate::exporter::{
     ActiveModelKind, ExportOutcome, ExportPayload, GridRow, ProjectFileEntry, ReportFormat,
     export_and_launch_positron, list_project_directory, load_text_file, save_text_file,
 };
+use crate::math::{
+    self, CompiledExpr, CompiledWorkspace, EvalContext, EvalScratch, PlottableEntry,
+};
+pub use crate::r_engine::RObject;
+use crate::r_engine::{DesmosBridge, EmbeddedREngine, REngineMathBridge};
+use crate::ui::math_preview::{apply_smart_math_shortcuts, render_math_preview_strip};
 use eframe::egui::{
     self, Color32, FontFamily, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, TextStyle,
     Ui, Vec2,
@@ -11,101 +18,7 @@ use egui_plot::{
     Legend, Line, LineStyle, MarkerShape, Plot, PlotBounds, PlotPoints, Points, Polygon, VLine,
 };
 use nalgebra::{Matrix2, Vector2};
-use std::borrow::Borrow;
 use std::path::PathBuf;
-
-/// Deterministic insertion-ordered map (`IndexMap<K, V>`) preserving declaration sequence.
-#[derive(Debug, Clone, Default)]
-pub struct IndexMap<K, V> {
-    entries: Vec<(K, V)>,
-}
-
-impl<K, V> IndexMap<K, V>
-where
-    K: PartialEq,
-{
-    pub fn new() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
-    }
-
-    pub fn insert(&mut self, key: K, value: V) -> Option<V> {
-        for (existing_k, existing_v) in &mut self.entries {
-            if *existing_k == key {
-                return Some(std::mem::replace(existing_v, value));
-            }
-        }
-        self.entries.push((key, value));
-        None
-    }
-
-    pub fn get<Q>(&self, key: &Q) -> Option<&V>
-    where
-        K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
-    {
-        self.entries
-            .iter()
-            .find(|(k, _)| k.borrow() == key)
-            .map(|(_, v)| v)
-    }
-
-    pub fn remove<Q>(&mut self, key: &Q) -> Option<V>
-    where
-        K: Borrow<Q>,
-        Q: PartialEq + ?Sized,
-    {
-        if let Some(idx) = self.entries.iter().position(|(k, _)| k.borrow() == key) {
-            Some(self.entries.remove(idx).1)
-        } else {
-            None
-        }
-    }
-
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    pub fn iter(&self) -> std::iter::Map<std::slice::Iter<'_, (K, V)>, fn(&(K, V)) -> (&K, &V)> {
-        self.entries.iter().map(|(k, v)| (k, v))
-    }
-
-    pub fn keys(&self) -> std::iter::Map<std::slice::Iter<'_, (K, V)>, fn(&(K, V)) -> &K> {
-        self.entries.iter().map(|(k, _)| k)
-    }
-
-    pub fn values(&self) -> std::iter::Map<std::slice::Iter<'_, (K, V)>, fn(&(K, V)) -> &V> {
-        self.entries.iter().map(|(_, v)| v)
-    }
-}
-
-impl<'a, K, V> IntoIterator for &'a IndexMap<K, V> {
-    type Item = (&'a K, &'a V);
-    type IntoIter = std::iter::Map<std::slice::Iter<'a, (K, V)>, fn(&'a (K, V)) -> (&'a K, &'a V)>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries.iter().map(|(k, v)| (k, v))
-    }
-}
-
-impl<'a, K, V> IntoIterator for &'a mut IndexMap<K, V> {
-    type Item = (&'a K, &'a mut V);
-    type IntoIter =
-        std::iter::Map<std::slice::IterMut<'a, (K, V)>, fn(&'a mut (K, V)) -> (&'a K, &'a mut V)>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.entries.iter_mut().map(|(k, v)| (&*k, v))
-    }
-}
 
 // =============================================================================
 // DESMOS SLIDER SPECIFICATION & FUNCTION VISUAL STYLING
@@ -246,53 +159,8 @@ impl FunctionStyle {
 }
 
 // =============================================================================
-// R-LITE OBJECTS & DATASETS
+// DATASETS (RObject is defined in src/r_engine/object.rs and re-exported above)
 // =============================================================================
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RObject {
-    Scalar(f64),
-    Vector(Vec<f64>),
-    Text(String),
-}
-
-impl RObject {
-    pub fn type_summary(&self) -> String {
-        match self {
-            RObject::Scalar(_) => "numeric [1]".to_string(),
-            RObject::Vector(v) => format!("numeric [1:{}]", v.len()),
-            RObject::Text(s) => format!("character ({} chars)", s.len()),
-        }
-    }
-
-    pub fn preview_string(&self) -> String {
-        match self {
-            RObject::Scalar(v) => format!("[1] {:.6}", v),
-            RObject::Vector(v) => {
-                if v.is_empty() {
-                    "numeric(0)".to_string()
-                } else {
-                    let head: Vec<String> =
-                        v.iter().take(8).map(|x| format!("{:.4}", x)).collect();
-                    if v.len() > 8 {
-                        format!("[1] {} ... ({} items)", head.join(", "), v.len())
-                    } else {
-                        format!("[1] {}", head.join(", "))
-                    }
-                }
-            }
-            RObject::Text(s) => format!("\"{}\"", s),
-        }
-    }
-
-    pub fn as_slice(&self) -> Vec<f64> {
-        match self {
-            RObject::Scalar(v) => vec![*v],
-            RObject::Vector(v) => v.clone(),
-            RObject::Text(_) => Vec::new(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct DataTable {
@@ -342,7 +210,7 @@ impl DataTable {
                 continue;
             }
             let parts: Vec<&str> = trimmed
-                .split(|c| c == ',' || c == ';' || c == '\t')
+                .split([',', ';', '\t'])
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .collect();
@@ -365,6 +233,7 @@ pub struct Workspace {
     pub slider_specs: IndexMap<String, SliderSpec>,
     pub functions: IndexMap<String, String>,
     pub function_styles: IndexMap<String, FunctionStyle>,
+    pub compiled_math: CompiledWorkspace,
     pub r_objects: IndexMap<String, RObject>,
     pub datasets: Vec<DataTable>,
     pub active_dataset_idx: usize,
@@ -379,6 +248,7 @@ impl Workspace {
             slider_specs: IndexMap::new(),
             functions: IndexMap::new(),
             function_styles: IndexMap::new(),
+            compiled_math: CompiledWorkspace::default(),
             r_objects: IndexMap::new(),
             datasets: Vec::new(),
             active_dataset_idx: 0,
@@ -432,7 +302,7 @@ x,y
             self.slider_specs.insert(key.clone(), spec);
         }
         self.parameters.insert(key.clone(), val);
-        self.r_objects.insert(key, RObject::Scalar(val));
+        self.r_objects.insert(key, RObject::scalar(val));
     }
 
     pub fn set_function(&mut self, sig: impl Into<String>, expr: impl Into<String>) {
@@ -443,6 +313,11 @@ x,y
                 .insert(key.clone(), FunctionStyle::default_for_index(idx));
         }
         self.functions.insert(key, expr.into());
+        self.sync_math_cache();
+    }
+
+    pub fn sync_math_cache(&mut self) {
+        self.compiled_math = CompiledWorkspace::build(&self.functions);
     }
 
     pub fn clear(&mut self) {
@@ -450,6 +325,7 @@ x,y
         self.slider_specs.clear();
         self.functions.clear();
         self.function_styles.clear();
+        self.compiled_math = CompiledWorkspace::default();
         self.r_objects.clear();
         self.markdown_notes.clear();
         self.csv_scratchpad.clear();
@@ -787,6 +663,55 @@ struct ConsoleLogEntry {
     is_error: bool,
 }
 
+/// Bridge exposing active Desmos functions & slider parameters to the embedded R engine.
+struct WorkspaceDesmosBridge<'a> {
+    parameters: &'a IndexMap<String, f64>,
+    compiled_math: &'a CompiledWorkspace,
+    diff_h: f64,
+    integral_steps: usize,
+}
+
+impl DesmosBridge for WorkspaceDesmosBridge<'_> {
+    fn has_desmos_fn(&self, name: &str) -> bool {
+        self.compiled_math.functions.contains_key(name)
+    }
+
+    fn call_desmos_fn(&self, name: &str, args: &[f64]) -> Option<Result<f64, String>> {
+        let user_fn = self.compiled_math.functions.get(name)?;
+        if args.len() != user_fn.params.len() {
+            return Some(Err(format!(
+                "Desmos function `{}` expects {} argument(s), got {}",
+                name,
+                user_fn.params.len(),
+                args.len()
+            )));
+        }
+        let ctx = EvalContext::new(self.parameters, &self.compiled_math.functions)
+            .with_diff_h(self.diff_h)
+            .with_integral_steps(self.integral_steps);
+        let mut overrides: Vec<(&str, f64)> = Vec::with_capacity(args.len() + 2);
+        for (p, &v) in user_fn.params.iter().zip(args.iter()) {
+            overrides.push((p.as_str(), v));
+        }
+        if let Some(&x0) = args.first() {
+            overrides.push(("L", x0));
+            overrides.push(("Q", x0));
+            overrides.push(("Y", x0));
+        }
+        let mut scratch = EvalScratch::new();
+        Some(
+            user_fn
+                .body
+                .eval(&ctx, &overrides, &mut scratch)
+                .map_err(|e| e.message),
+        )
+    }
+
+    fn get_desmos_param(&self, name: &str) -> Option<f64> {
+        self.parameters.get(name).copied()
+    }
+}
+
 // =============================================================================
 // MAIN APPLICATION STATE
 // =============================================================================
@@ -822,6 +747,7 @@ pub struct EconCalcApp {
     new_fn_expr_input: String,
     new_param_name_input: String,
     new_param_val_input: String,
+    smart_math_shortcuts: bool,
     editor_script: String,
     console_logs: Vec<ConsoleLogEntry>,
     eval_counter: usize,
@@ -906,6 +832,7 @@ impl EconCalcApp {
             new_fn_expr_input: "x^2".to_string(),
             new_param_name_input: "k".to_string(),
             new_param_val_input: "1.0".to_string(),
+            smart_math_shortcuts: true,
             editor_script: initial_script,
             console_logs: Vec::new(),
             eval_counter: 0,
@@ -1036,265 +963,68 @@ impl EconCalcApp {
     }
 
     // =========================================================================
-    // SYMBOLIC & NUMERICAL ENGINE (WITH CONSTANTS e, pi & RECURSION PROTECTION)
+    // AST-BASED SYMBOLIC & COMPILED NUMERICAL ENGINE (src/math/)
     // =========================================================================
 
-    pub fn sanitize_for_meval(raw: &str) -> String {
-        let mut s = raw
-            .replace("\\cdot", "*")
-            .replace("\\times", "*")
-            .replace('{', "(")
-            .replace('}', ")");
-        s.retain(|ch| ch != '\\');
-        s.trim().to_string()
+    /// Normalizes a raw identifier or LaTeX token (`\alpha`, `\bar{Y}`, `P_x`) into a
+    /// canonical workspace key (`alpha`, `Y_bar`, `P_x`).
+    pub fn normalize_ident_name(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if let Ok(ast) = math::parse_expr(trimmed) {
+            if let Some(canon) = ast.as_canonical_ident() {
+                return canon;
+            }
+        }
+        trimmed
+            .trim_start_matches('\\')
+            .replace(['{', '}', ' '], "")
     }
 
-    fn insert_implicit_multiplication(expr: &str) -> String {
-        #[derive(Clone, Copy, PartialEq)]
-        enum TokenKind {
-            Number,
-            Identifier,
-            OpenParen,
-            CloseParen,
-            Other,
+    /// Normalizes a function signature (`f(x)`, `u(x, y)`, `\phi(t)`), preserving parameters.
+    pub fn normalize_fn_signature(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if let Some((name, params)) = math::parse_function_signature(trimmed) {
+            if params.is_empty() {
+                return format!("{}(x)", Self::normalize_ident_name(&name));
+            }
+            let norm_params: Vec<String> = params
+                .iter()
+                .map(|p| Self::normalize_ident_name(p))
+                .collect();
+            return format!(
+                "{}({})",
+                Self::normalize_ident_name(&name),
+                norm_params.join(", ")
+            );
         }
-
-        let chars: Vec<char> = expr.chars().collect();
-        let mut tokens: Vec<(TokenKind, String)> = Vec::new();
-        let mut i = 0;
-
-        while i < chars.len() {
-            let ch = chars[i];
-            if ch.is_whitespace() {
-                i += 1;
-                continue;
-            }
-
-            if ch.is_ascii_digit()
-                || (ch == '.'
-                    && chars
-                        .get(i + 1)
-                        .map(|c| c.is_ascii_digit())
-                        .unwrap_or(false))
-            {
-                let mut text = String::new();
-                let mut has_decimal = false;
-                while i < chars.len() {
-                    if chars[i].is_ascii_digit() {
-                        text.push(chars[i]);
-                        i += 1;
-                    } else if chars[i] == '.' && !has_decimal {
-                        has_decimal = true;
-                        text.push(chars[i]);
-                        i += 1;
-                    } else {
-                        break;
-                    }
-                }
-
-                if i < chars.len() && matches!(chars[i], 'e' | 'E') {
-                    let mut exponent_end = i + 1;
-                    if exponent_end < chars.len() && matches!(chars[exponent_end], '+' | '-') {
-                        exponent_end += 1;
-                    }
-                    let digits_start = exponent_end;
-                    while exponent_end < chars.len() && chars[exponent_end].is_ascii_digit() {
-                        exponent_end += 1;
-                    }
-                    if exponent_end > digits_start {
-                        text.extend(chars[i..exponent_end].iter());
-                        i = exponent_end;
-                    }
-                }
-                tokens.push((TokenKind::Number, text));
-                continue;
-            }
-
-            if ch.is_alphabetic() || ch == '_' {
-                let start = i;
-                i += 1;
-                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
-                    i += 1;
-                }
-                tokens.push((TokenKind::Identifier, chars[start..i].iter().collect()));
-                continue;
-            }
-
-            let kind = match ch {
-                '(' => TokenKind::OpenParen,
-                ')' => TokenKind::CloseParen,
-                _ => TokenKind::Other,
-            };
-            tokens.push((kind, ch.to_string()));
-            i += 1;
-        }
-
-        let is_function = |name: &str| {
-            matches!(
-                name,
-                "abs"
-                    | "acos"
-                    | "acosh"
-                    | "asin"
-                    | "asinh"
-                    | "atan"
-                    | "atanh"
-                    | "atan2"
-                    | "cbrt"
-                    | "ceil"
-                    | "cos"
-                    | "cosh"
-                    | "exp"
-                    | "floor"
-                    | "ln"
-                    | "log"
-                    | "log10"
-                    | "log2"
-                    | "max"
-                    | "min"
-                    | "round"
-                    | "signum"
-                    | "sin"
-                    | "sinh"
-                    | "sqrt"
-                    | "tan"
-                    | "tanh"
-                    | "sec"
-                    | "csc"
-                    | "cot"
-            )
-        };
-        let mut result = String::with_capacity(expr.len() + tokens.len());
-        let mut previous: Option<(TokenKind, &str)> = None;
-        for (kind, text) in &tokens {
-            if let Some((previous_kind, previous_text)) = previous {
-                let left_is_value = matches!(
-                    previous_kind,
-                    TokenKind::Number | TokenKind::Identifier | TokenKind::CloseParen
-                );
-                let right_starts_value = matches!(
-                    kind,
-                    TokenKind::Number | TokenKind::Identifier | TokenKind::OpenParen
-                );
-                let is_function_call = previous_kind == TokenKind::Identifier
-                    && *kind == TokenKind::OpenParen
-                    && is_function(previous_text);
-                if left_is_value && right_starts_value && !is_function_call {
-                    result.push('*');
-                }
-            }
-            result.push_str(text);
-            previous = Some((*kind, text));
-        }
-        result
+        Self::normalize_ident_name(trimmed)
     }
 
-    /// Safely expands workspace function references with cycle protection and length cap.
-    fn expand_workspace_functions(&self, expr_str: &str) -> String {
-        let mut expanded = Self::sanitize_for_meval(expr_str);
-        for _ in 0..3 {
-            let mut changed = false;
-            for (sig, body) in &self.workspace.functions {
-                if expanded.len() > 2048 {
-                    break;
-                }
-                let clean_body = Self::sanitize_for_meval(body);
-                if clean_body.contains(sig.as_str()) {
-                    continue;
-                }
-                if expanded.contains(sig.as_str()) && sig != &expanded {
-                    let replacement = format!("({})", clean_body);
-                    expanded = expanded.replace(sig.as_str(), &replacement);
-                    changed = true;
-                }
-                if let Some((fn_name, _)) = sig.split_once('(') {
-                    let call_1d = format!("{}(x)", fn_name);
-                    if expanded.contains(&call_1d)
-                        && !clean_body.contains(&call_1d)
-                        && call_1d != expanded
-                    {
-                        let replacement = format!("({})", clean_body);
-                        expanded = expanded.replace(&call_1d, &replacement);
-                        changed = true;
-                    }
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        Self::insert_implicit_multiplication(&expanded)
-    }
-
-    pub fn replace_identifier_token(expr: &str, ident: &str, replacement: &str) -> String {
-        if ident.is_empty() || !expr.contains(ident) {
-            return expr.to_string();
-        }
-        let is_ident_char = |c: char| c.is_ascii_alphanumeric() || c == '_';
-        let mut result = String::with_capacity(expr.len() + 16);
-        let mut rest = expr;
-        let mut prev_char: Option<char> = None;
-
-        while let Some(pos) = rest.find(ident) {
-            let prefix = &rest[..pos];
-            if let Some(last_ch) = prefix.chars().last() {
-                prev_char = Some(last_ch);
-            }
-            let valid_start = !prev_char.map(is_ident_char).unwrap_or(false);
-            let after_idx = pos + ident.len();
-            let after_str = &rest[after_idx..];
-            let next_char = after_str.chars().next();
-            let valid_end = !next_char.map(is_ident_char).unwrap_or(false);
-
-            result.push_str(prefix);
-            if valid_start && valid_end {
-                result.push_str(replacement);
-            } else {
-                result.push_str(ident);
-            }
-            prev_char = ident.chars().last();
-            rest = after_str;
-        }
-        result.push_str(rest);
-        result
-    }
-
-    fn build_meval_context(&self, x_val: f64, y_val: f64) -> meval::Context<'static> {
-        let mut ctx = meval::Context::new();
-        ctx.var("e", std::f64::consts::E);
-        ctx.var("pi", std::f64::consts::PI);
-        ctx.var("PI", std::f64::consts::PI);
-        ctx.var("phi", 1.618_033_988_749_895_f64);
-
-        ctx.func("log10", |x| x.log10());
-        ctx.func("log2", |x| x.log2());
-        ctx.func2("log", |x, base| x.ln() / base.ln());
-        ctx.func("sec", |x| 1.0_f64 / x.cos());
-        ctx.func("csc", |x| 1.0_f64 / x.sin());
-        ctx.func("cot", |x| x.cos() / x.sin());
-
-        for (k, &v) in &self.workspace.parameters {
-            ctx.var(k.as_str(), v);
-        }
-        for (k, obj) in &self.workspace.r_objects {
-            if let RObject::Scalar(v) = obj {
-                ctx.var(k.as_str(), *v);
-            }
-        }
-
-        ctx.var("x", x_val);
-        ctx.var("y", y_val);
-        ctx.var("L", x_val);
-        ctx.var("K", y_val);
-        ctx.var("Q", x_val);
-        ctx.var("Y", x_val);
-        ctx
+    fn build_eval_context<'a>(
+        &'a self,
+        ext: &'a REngineMathBridge<'a>,
+    ) -> EvalContext<'a> {
+        EvalContext::new(&self.workspace.parameters, &self.workspace.compiled_math.functions)
+            .with_external(ext)
+            .with_diff_h(self.diff_step_h)
+            .with_integral_steps(self.simpson_subintervals)
     }
 
     fn eval_parameter_rhs(&self, expr_str: &str) -> Result<f64, String> {
-        let ctx = self.build_meval_context(0.0_f64, 0.0_f64);
-        let clean = Self::insert_implicit_multiplication(&Self::sanitize_for_meval(expr_str));
-        meval::eval_str_with_context(&clean, &ctx).map_err(|e| e.to_string())
+        let ast = math::parse_expr_with_known_fns(
+            expr_str,
+            &self.workspace.compiled_math.known_fn_names,
+        )
+        .map_err(|e| e.format_with_source(expr_str))?;
+        let compiled = CompiledExpr::compile(&ast);
+        let ext = REngineMathBridge {
+            r_objects: &self.workspace.r_objects,
+        };
+        let ctx = self.build_eval_context(&ext);
+        let mut scratch = EvalScratch::new();
+        compiled
+            .eval(&ctx, &[], &mut scratch)
+            .map_err(|e| e.message)
     }
 
     pub fn eval_expression_str(
@@ -1303,13 +1033,35 @@ impl EconCalcApp {
         x_val: f64,
         y_val: f64,
     ) -> Result<f64, String> {
-        let ctx = self.build_meval_context(x_val, y_val);
-        let expanded = self.expand_workspace_functions(expr_str);
-        meval::eval_str_with_context(&expanded, &ctx).map_err(|e| e.to_string())
+        let ast = math::parse_expr_with_known_fns(
+            expr_str,
+            &self.workspace.compiled_math.known_fn_names,
+        )
+        .map_err(|e| e.format_with_source(expr_str))?;
+        let compiled = CompiledExpr::compile(&ast);
+        let ext = REngineMathBridge {
+            r_objects: &self.workspace.r_objects,
+        };
+        let ctx = self.build_eval_context(&ext);
+        let mut scratch = EvalScratch::new();
+        compiled
+            .eval(
+                &ctx,
+                &[
+                    ("x", x_val),
+                    ("y", y_val),
+                    ("L", x_val),
+                    ("K", y_val),
+                    ("Q", x_val),
+                    ("Y", x_val),
+                ],
+                &mut scratch,
+            )
+            .map_err(|e| e.message)
     }
 
-    /// Samples a 1D function across `[sample_min, sample_max]` with asymptote & discontinuity splitting
-    /// and viewport Y-margin clamping so `1/x` and `e^x` never cause vertical line artifacts or RAM spikes.
+    /// Samples a 1D function across `[sample_min, sample_max]` with asymptote & piecewise
+    /// discontinuity splitting using the compiled bytecode evaluator.
     pub fn sample_function_branches(
         &self,
         expr_str: &str,
@@ -1319,76 +1071,27 @@ impl EconCalcApp {
         vis_y_max: f64,
         samples: usize,
     ) -> Vec<Vec<[f64; 2]>> {
-        let samples = samples.clamp(32, 4000);
-        let span_x = (sample_max - sample_min).max(1e-6_f64);
-        let span_y = (vis_y_max - vis_y_min).abs().max(2.0_f64);
-        let y_margin = span_y * 2.5_f64;
-        let y_low = vis_y_min - y_margin;
-        let y_high = vis_y_max + y_margin;
-        let jump_limit = span_y * self.asymptote_jump_factor.max(1.5_f64);
-
-        let expanded = self.expand_workspace_functions(expr_str);
-        let mut ctx = self.build_meval_context(0.0_f64, 10.0_f64);
-
-        let mut branches: Vec<Vec<[f64; 2]>> = Vec::new();
-        let mut current_branch: Vec<[f64; 2]> = Vec::new();
-        let mut prev_pt: Option<[f64; 2]> = None;
-
-        for i in 0..=samples {
-            let x = sample_min + span_x * (i as f64) / (samples as f64);
-            ctx.var("x", x);
-            ctx.var("L", x);
-            ctx.var("Q", x);
-            ctx.var("Y", x);
-
-            let Ok(y) = meval::eval_str_with_context(&expanded, &ctx) else {
-                if !current_branch.is_empty() {
-                    branches.push(std::mem::take(&mut current_branch));
-                }
-                prev_pt = None;
-                continue;
-            };
-
-            if !y.is_finite() || y < y_low || y > y_high {
-                if let Some([px, py]) = prev_pt {
-                    if y.is_finite() && (py >= y_low && py <= y_high) && (y - py).abs() < jump_limit
-                    {
-                        let target_y = y.clamp(y_low, y_high);
-                        let t = ((target_y - py) / (y - py)).clamp(0.0_f64, 1.0_f64);
-                        let cx = px + t * (x - px);
-                        current_branch.push([cx, target_y]);
-                    }
-                }
-                if !current_branch.is_empty() {
-                    branches.push(std::mem::take(&mut current_branch));
-                }
-                prev_pt = None;
-                continue;
-            }
-
-            if let Some([px, py]) = prev_pt {
-                let dy = (y - py).abs();
-                if dy > jump_limit {
-                    let mid_x = 0.5_f64 * (px + x);
-                    ctx.var("x", mid_x);
-                    let mid_y = meval::eval_str_with_context(&expanded, &ctx).unwrap_or(f64::NAN);
-                    let is_monotonic = mid_y.is_finite()
-                        && ((mid_y >= py && mid_y <= y) || (mid_y <= py && mid_y >= y));
-                    if !is_monotonic && !current_branch.is_empty() {
-                        branches.push(std::mem::take(&mut current_branch));
-                    }
-                }
-            }
-
-            current_branch.push([x, y]);
-            prev_pt = Some([x, y]);
-        }
-
-        if !current_branch.is_empty() {
-            branches.push(current_branch);
-        }
-
-        branches
+        let Ok(ast) = math::parse_expr_with_known_fns(
+            expr_str,
+            &self.workspace.compiled_math.known_fn_names,
+        ) else {
+            return Vec::new();
+        };
+        let compiled = CompiledExpr::compile(&ast);
+        let ext = REngineMathBridge {
+            r_objects: &self.workspace.r_objects,
+        };
+        let ctx = self.build_eval_context(&ext);
+        math::sample_1d_branches(
+            &compiled,
+            &ctx,
+            sample_min,
+            sample_max,
+            vis_y_min,
+            vis_y_max,
+            samples,
+            self.asymptote_jump_factor,
+        )
     }
 
     // =========================================================================
@@ -1495,27 +1198,19 @@ impl EconCalcApp {
             return self.handle_r_plot_command(&tag, trimmed, inner);
         }
 
-        if let Some(inner) = trimmed
-            .strip_prefix("data.frame(")
-            .or_else(|| trimmed.strip_prefix("tibble("))
-            .and_then(|s| s.strip_suffix(')'))
-        {
-            return self.handle_r_dataframe_command(&tag, trimmed, inner);
-        }
-
+        // Handle explicit Desmos function definition `f(x) = ...` or `u(x, y) = ...`
         if let Some((lhs, rhs)) = Self::split_assignment(trimmed) {
-            let lhs_clean = Self::sanitize_for_meval(lhs).replace(' ', "");
-            let rhs_clean = rhs.trim();
-
-            if lhs_clean.contains('(') && lhs_clean.ends_with(')') {
-                let rhs_meval = Self::sanitize_for_meval(rhs_clean);
-                match self.eval_expression_str(&rhs_meval, self.probe_x, 1.0_f64) {
+            let lhs_trim = lhs.trim();
+            let rhs_trim = rhs.trim();
+            if Self::is_desmos_function_lhs(lhs_trim) && !rhs_trim.starts_with("function") {
+                let lhs_clean = Self::normalize_fn_signature(lhs_trim);
+                match self.eval_expression_str(rhs_trim, self.probe_x, 1.0_f64) {
                     Ok(v) => {
                         self.workspace
-                            .set_function(lhs_clean.clone(), rhs_meval.clone());
+                            .set_function(lhs_clean.clone(), rhs_trim.to_string());
                         let out = format!(
                             "Function `{}` = `{}` (@ x={:.2} -> {:.4})",
-                            lhs_clean, rhs_meval, self.probe_x, v
+                            lhs_clean, rhs_trim, self.probe_x, v
                         );
                         self.console_logs.push(ConsoleLogEntry {
                             timestamp_tag: tag,
@@ -1537,34 +1232,13 @@ impl EconCalcApp {
                     }
                 }
             }
-
-            match self.eval_r_expression(rhs_clean) {
-                Ok(r_obj) => {
-                    let preview = r_obj.preview_string();
-                    if let RObject::Scalar(v) = r_obj {
-                        if v.is_finite() {
-                            self.workspace.set_parameter(lhs_clean.clone(), v);
-                        }
-                    } else {
-                        self.workspace.r_objects.insert(lhs_clean.clone(), r_obj);
-                    }
-                    let out = format!("{} <- {}", lhs_clean, preview);
-                    self.console_logs.push(ConsoleLogEntry {
-                        timestamp_tag: tag,
-                        source_line: trimmed.to_string(),
-                        message: out.clone(),
-                        is_error: false,
-                    });
-                    return out;
-                }
-                Err(_) => {
-                    let rhs_meval = Self::sanitize_for_meval(rhs_clean);
-                    if let Ok(v) = self.eval_expression_str(&rhs_meval, self.probe_x, 1.0_f64) {
-                        let fn_sig = format!("{}(x)", lhs_clean);
-                        self.workspace
-                            .set_function(fn_sig.clone(), rhs_meval.clone());
-                        let out =
-                            format!("Defined `{}` = `{}` (probe -> {:.4})", fn_sig, rhs_meval, v);
+            // Handle LaTeX parameter assignment `\alpha = 0.45`
+            if lhs_trim.starts_with('\\') {
+                let param_key = Self::normalize_ident_name(lhs_trim);
+                if let Ok(v) = self.eval_parameter_rhs(rhs_trim) {
+                    if v.is_finite() {
+                        self.workspace.set_parameter(param_key.clone(), v);
+                        let out = format!("{} = {:.6}", param_key, v);
                         self.console_logs.push(ConsoleLogEntry {
                             timestamp_tag: tag,
                             source_line: trimmed.to_string(),
@@ -1577,27 +1251,60 @@ impl EconCalcApp {
             }
         }
 
-        match self.eval_r_expression(trimmed) {
-            Ok(obj) => {
-                let out = obj.preview_string();
+        // Execute using the embedded AST-based R engine with live Desmos bridge
+        match self.execute_r_code_in_workspace(trimmed) {
+            Ok((obj, stdout)) => {
+                // Sync scalar numeric assignments (`a <- 5` or `a = 5`) to Desmos sliders
+                if let Some((lhs, _)) = Self::split_assignment(trimmed) {
+                    let lhs_t = lhs.trim();
+                    if Self::is_plain_ident(lhs_t) {
+                        if let Some(val) = obj.as_scalar_f64() {
+                            if val.is_finite() {
+                                self.workspace.set_parameter(lhs_t.to_string(), val);
+                            }
+                        }
+                    }
+                }
+                let mut out = if stdout.is_empty() {
+                    obj.preview_string()
+                } else {
+                    format!("{}\n{}", stdout.join("\n"), obj.preview_string())
+                };
+                if out.trim().is_empty() {
+                    out = "NULL".to_string();
+                }
                 self.console_logs.push(ConsoleLogEntry {
                     timestamp_tag: tag,
                     source_line: trimmed.to_string(),
                     message: out.clone(),
                     is_error: false,
                 });
-                self.status_banner = format!("Result: {}", out);
+                self.status_banner = format!("Result: {}", out.lines().next().unwrap_or("OK"));
                 out
             }
-            Err(err) => {
-                let clean = Self::sanitize_for_meval(trimmed);
-                if clean.contains('x') {
-                    if let Ok(sample) = self.eval_expression_str(&clean, 1.0_f64, 1.0_f64) {
+            Err(r_err) => {
+                // Fallback to Desmos math evaluator (for LaTeX, implicit multiplication, or `x` curves)
+                if let Ok(val) = self.eval_parameter_rhs(trimmed) {
+                    if val.is_finite() {
+                        let out = format!("[1] {:.6}", val);
+                        self.console_logs.push(ConsoleLogEntry {
+                            timestamp_tag: tag,
+                            source_line: trimmed.to_string(),
+                            message: out.clone(),
+                            is_error: false,
+                        });
+                        self.status_banner = format!("Result: {}", out);
+                        return out;
+                    }
+                }
+                if trimmed.contains('x') || trimmed.contains('y') || trimmed.contains("theta") {
+                    if let Ok(sample) = self.eval_expression_str(trimmed, 1.0_f64, 1.0_f64) {
                         let auto_sig = format!("f{}(x)", self.workspace.functions.len() + 1);
-                        self.workspace.set_function(auto_sig.clone(), clean.clone());
+                        self.workspace
+                            .set_function(auto_sig.clone(), trimmed.to_string());
                         let out = format!(
                             "Plotted `{}` = `{}` (f(1) = {:.4})",
-                            auto_sig, clean, sample
+                            auto_sig, trimmed, sample
                         );
                         self.console_logs.push(ConsoleLogEntry {
                             timestamp_tag: tag,
@@ -1609,7 +1316,7 @@ impl EconCalcApp {
                     }
                 }
 
-                let err_msg = format!("Evaluation error: {}", err);
+                let err_msg = format!("Evaluation error: {}", r_err);
                 self.console_logs.push(ConsoleLogEntry {
                     timestamp_tag: tag,
                     source_line: trimmed.to_string(),
@@ -1621,243 +1328,83 @@ impl EconCalcApp {
         }
     }
 
-    fn split_assignment(line: &str) -> Option<(&str, &str)> {
-        if let Some((l, r)) = line.split_once("<-") {
-            return Some((l, r));
+    fn is_desmos_function_lhs(lhs: &str) -> bool {
+        let Some((name, rest)) = lhs.split_once('(') else {
+            return false;
+        };
+        if !rest.ends_with(')') {
+            return false;
         }
-        if let Some((l, r)) = line.split_once('=') {
-            if !l.ends_with('<') && !l.ends_with('>') && !l.ends_with('!') && !r.starts_with('=') {
-                return Some((l, r));
+        let n = name.trim().trim_start_matches('\\');
+        if n.is_empty()
+            || matches!(
+                n,
+                "if" | "for" | "while" | "function" | "return" | "c" | "list" | "data.frame"
+            )
+        {
+            return false;
+        }
+        n.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    fn is_plain_ident(s: &str) -> bool {
+        !s.is_empty()
+            && !s.contains(' ')
+            && !s.contains('[')
+            && !s.contains('$')
+            && !s.contains('(')
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+    }
+
+    fn split_assignment(line: &str) -> Option<(&str, &str)> {
+        let mut depth = 0usize;
+        let bytes = line.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+                b'<' if depth == 0 && i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
+                    return Some((&line[..i], &line[i + 2..]));
+                }
+                b'=' if depth == 0 => {
+                    let prev = if i > 0 { bytes[i - 1] } else { 0 };
+                    let next = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+                    if !matches!(prev, b'<' | b'>' | b'!' | b'=') && next != b'=' {
+                        return Some((&line[..i], &line[i + 1..]));
+                    }
+                }
+                _ => {}
             }
+            i += 1;
         }
         None
     }
 
-    /// Evaluates R expressions (`c(...)`, `rep(...)`, `seq(...)`, `a:b`, `sum(...)`, `mean(...)`, `sd(...)`,
-    /// vectorized arithmetic, or scalar math).
+    /// Executes R code mutating `self.workspace.r_objects` with live access to Desmos functions & sliders.
+    fn execute_r_code_in_workspace(&mut self, code: &str) -> Result<(RObject, Vec<String>), String> {
+        let bridge = WorkspaceDesmosBridge {
+            parameters: &self.workspace.parameters,
+            compiled_math: &self.workspace.compiled_math,
+            diff_h: self.diff_step_h,
+            integral_steps: self.simpson_subintervals,
+        };
+        let res = EmbeddedREngine::eval_in_env(&mut self.workspace.r_objects, code, Some(&bridge))
+            .map_err(|e| e.message)?;
+        Ok((res.value, res.stdout))
+    }
+
+    /// Evaluates an R expression read-only against the current workspace environment and Desmos bridge.
     pub fn eval_r_expression(&self, expr: &str) -> Result<RObject, String> {
-        let s = expr.trim();
-        if s.is_empty() {
-            return Err("Empty expression".to_string());
-        }
-
-        if let Some(obj) = self.workspace.r_objects.get(s) {
-            return Ok(obj.clone());
-        }
-        if let Some(&val) = self.workspace.parameters.get(s) {
-            return Ok(RObject::Scalar(val));
-        }
-
-        if let Some(inner) = s.strip_prefix("c(").and_then(|rest| rest.strip_suffix(')')) {
-            let args = Self::split_top_level_args(inner);
-            let mut vec_out = Vec::new();
-            for arg in args {
-                let sub = self.eval_r_expression(arg)?;
-                vec_out.extend(sub.as_slice());
-            }
-            return Ok(RObject::Vector(vec_out));
-        }
-
-        if let Some(inner) = s
-            .strip_prefix("rep(")
-            .and_then(|rest| rest.strip_suffix(')'))
-        {
-            let args = Self::split_top_level_args(inner);
-            if args.len() != 2 {
-                return Err("`rep(x, n)` requires 2 arguments".to_string());
-            }
-            let base = self.eval_r_expression(args[0])?.as_slice();
-            let count_obj = self.eval_r_expression(args[1])?.as_slice();
-            let count = count_obj
-                .first()
-                .copied()
-                .unwrap_or(0.0_f64)
-                .max(0.0_f64) as usize;
-            let count = count.min(10_000);
-            let mut out = Vec::with_capacity(base.len() * count);
-            for _ in 0..count {
-                out.extend_from_slice(&base);
-            }
-            return Ok(RObject::Vector(out));
-        }
-
-        if let Some(inner) = s
-            .strip_prefix("seq(")
-            .and_then(|rest| rest.strip_suffix(')'))
-        {
-            let args = Self::split_top_level_args(inner);
-            if args.len() < 2 || args.len() > 3 {
-                return Err("`seq(from, to, [by])` requires 2 or 3 arguments".to_string());
-            }
-            let from = self
-                .eval_r_expression(args[0])?
-                .as_slice()
-                .first()
-                .copied()
-                .ok_or("Invalid `from`")?;
-            let to = self
-                .eval_r_expression(args[1])?
-                .as_slice()
-                .first()
-                .copied()
-                .ok_or("Invalid `to`")?;
-            let step = if args.len() == 3 {
-                self.eval_r_expression(args[2])?
-                    .as_slice()
-                    .first()
-                    .copied()
-                    .ok_or("Invalid `by`")?
-            } else if to >= from {
-                1.0_f64
-            } else {
-                -1.0_f64
-            };
-            if step.abs() < 1e-12_f64 {
-                return Err("`seq` step cannot be 0".to_string());
-            }
-            let mut out = Vec::new();
-            let mut curr = from;
-            let max_steps = 10_000usize;
-            while ((step > 0.0_f64 && curr <= to + 1e-12_f64)
-                || (step < 0.0_f64 && curr >= to - 1e-12_f64))
-                && out.len() < max_steps
-            {
-                out.push(curr);
-                curr += step;
-            }
-            return Ok(RObject::Vector(out));
-        }
-
-        if let Some((a_str, b_str)) = s.split_once(':') {
-            if !s.contains('(') {
-                if let (Ok(a_obj), Ok(b_obj)) =
-                    (self.eval_r_expression(a_str), self.eval_r_expression(b_str))
-                {
-                    if let (Some(&a), Some(&b)) =
-                        (a_obj.as_slice().first(), b_obj.as_slice().first())
-                    {
-                        let step = if b >= a { 1.0_f64 } else { -1.0_f64 };
-                        let mut out = Vec::new();
-                        let mut curr = a;
-                        while ((step > 0.0_f64 && curr <= b + 1e-12_f64)
-                            || (step < 0.0_f64 && curr >= b - 1e-12_f64))
-                            && out.len() < 10_000
-                        {
-                            out.push(curr);
-                            curr += step;
-                        }
-                        return Ok(RObject::Vector(out));
-                    }
-                }
-            }
-        }
-
-        for fn_name in [
-            "sum", "mean", "sd", "var", "min", "max", "median", "length", "cumsum", "summary",
-        ] {
-            let prefix = format!("{}(", fn_name);
-            if let Some(inner) = s.strip_prefix(&prefix).and_then(|r| r.strip_suffix(')')) {
-                let vals = self.eval_r_expression(inner)?.as_slice();
-                if vals.is_empty() {
-                    return Err(format!("`{}` called on empty vector", fn_name));
-                }
-                let n = vals.len() as f64;
-                let sum: f64 = vals.iter().sum();
-                let mean = sum / n;
-                return match fn_name {
-                    "sum" => Ok(RObject::Scalar(sum)),
-                    "mean" => Ok(RObject::Scalar(mean)),
-                    "length" => Ok(RObject::Scalar(n)),
-                    "min" => Ok(RObject::Scalar(
-                        vals.iter().copied().fold(f64::INFINITY, f64::min),
-                    )),
-                    "max" => Ok(RObject::Scalar(
-                        vals.iter().copied().fold(f64::NEG_INFINITY, f64::max),
-                    )),
-                    "var" => {
-                        if vals.len() < 2 {
-                            Ok(RObject::Scalar(0.0_f64))
-                        } else {
-                            let v = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-                                / (n - 1.0_f64);
-                            Ok(RObject::Scalar(v))
-                        }
-                    }
-                    "sd" => {
-                        if vals.len() < 2 {
-                            Ok(RObject::Scalar(0.0_f64))
-                        } else {
-                            let v = vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-                                / (n - 1.0_f64);
-                            Ok(RObject::Scalar(v.sqrt()))
-                        }
-                    }
-                    "median" => {
-                        let mut sorted = vals.clone();
-                        sorted.sort_by(|a, b| {
-                            a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                        });
-                        let mid = sorted.len() / 2;
-                        let med = if sorted.len() % 2 == 1 {
-                            sorted[mid]
-                        } else {
-                            0.5_f64 * (sorted[mid - 1] + sorted[mid])
-                        };
-                        Ok(RObject::Scalar(med))
-                    }
-                    "cumsum" => {
-                        let mut acc = 0.0_f64;
-                        let out: Vec<f64> = vals
-                            .iter()
-                            .map(|&v| {
-                                acc += v;
-                                acc
-                            })
-                            .collect();
-                        Ok(RObject::Vector(out))
-                    }
-                    "summary" => {
-                        let min_v = vals.iter().copied().fold(f64::INFINITY, f64::min);
-                        let max_v = vals.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-                        let sd_v = if vals.len() >= 2 {
-                            (vals.iter().map(|x| (x - mean).powi(2)).sum::<f64>()
-                                / (n - 1.0_f64))
-                                .sqrt()
-                        } else {
-                            0.0_f64
-                        };
-                        Ok(RObject::Text(format!(
-                            "n={} | Min={:.4} | Mean={:.4} | SD={:.4} | Max={:.4}",
-                            vals.len(),
-                            min_v,
-                            mean,
-                            sd_v,
-                            max_v
-                        )))
-                    }
-                    _ => unreachable!(),
-                };
-            }
-        }
-
-        for (vec_name, obj) in &self.workspace.r_objects {
-            if let RObject::Vector(vec_vals) = obj {
-                let replaced_probe = Self::replace_identifier_token(s, vec_name, "1.0");
-                if replaced_probe != s {
-                    let mut result_vec = Vec::with_capacity(vec_vals.len());
-                    for &elem in vec_vals {
-                        let expr_i =
-                            Self::replace_identifier_token(s, vec_name, &format!("({})", elem));
-                        let scalar_val = self.eval_parameter_rhs(&expr_i)?;
-                        result_vec.push(scalar_val);
-                    }
-                    return Ok(RObject::Vector(result_vec));
-                }
-            }
-        }
-
-        let val = self.eval_parameter_rhs(s)?;
-        Ok(RObject::Scalar(val))
+        let bridge = WorkspaceDesmosBridge {
+            parameters: &self.workspace.parameters,
+            compiled_math: &self.workspace.compiled_math,
+            diff_h: self.diff_step_h,
+            integral_steps: self.simpson_subintervals,
+        };
+        EmbeddedREngine::eval_readonly(&self.workspace.r_objects, expr, Some(&bridge))
+            .map_err(|e| e.message)
     }
 
     fn split_top_level_args(inner: &str) -> Vec<&str> {
@@ -1887,7 +1434,7 @@ impl EconCalcApp {
         let (xs, ys, label) = if args.len() == 1 {
             match self.eval_r_expression(args[0]) {
                 Ok(obj) => {
-                    let y = obj.as_slice();
+                    let y = obj.as_f64_vec();
                     let x: Vec<f64> = (1..=y.len()).map(|i| i as f64).collect();
                     (x, y, format!("plot({})", args[0]))
                 }
@@ -1899,8 +1446,8 @@ impl EconCalcApp {
                 self.eval_r_expression(args[1]),
             ) {
                 (Ok(ox), Ok(oy)) => (
-                    ox.as_slice(),
-                    oy.as_slice(),
+                    ox.as_f64_vec(),
+                    oy.as_f64_vec(),
                     format!("plot({}, {})", args[0], args[1]),
                 ),
                 (Err(e), _) | (_, Err(e)) => return format!("plot error: {}", e),
@@ -1939,175 +1486,216 @@ impl EconCalcApp {
         msg
     }
 
-    fn handle_r_dataframe_command(&mut self, tag: &str, raw_cmd: &str, inner: &str) -> String {
-        let args = Self::split_top_level_args(inner);
-        if args.len() < 2 {
-            return "Usage: data.frame(x_vec, y_vec)".to_string();
+    /// Groups multi-line R blocks (`{ ... }`, `( ... )`, trailing pipes) into complete chunks.
+    fn split_script_chunks(script: &str) -> Vec<(usize, String)> {
+        let mut chunks = Vec::new();
+        let mut buf = String::new();
+        let mut start_line = 1usize;
+        let mut brace_depth = 0i32;
+        let mut paren_depth = 0i32;
+        let mut bracket_depth = 0i32;
+
+        for (idx, raw_line) in script.lines().enumerate() {
+            let line_num = idx + 1;
+            let trimmed = raw_line.trim();
+            if buf.is_empty() {
+                if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with("//") {
+                    continue;
+                }
+                start_line = line_num;
+            }
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(raw_line);
+
+            let mut in_str: Option<char> = None;
+            for ch in raw_line.chars() {
+                if let Some(q) = in_str {
+                    if ch == q {
+                        in_str = None;
+                    }
+                    continue;
+                }
+                match ch {
+                    '#' => break,
+                    '"' | '\'' => in_str = Some(ch),
+                    '{' => brace_depth += 1,
+                    '}' => brace_depth -= 1,
+                    '(' => paren_depth += 1,
+                    ')' => paren_depth -= 1,
+                    '[' => bracket_depth += 1,
+                    ']' => bracket_depth -= 1,
+                    _ => {}
+                }
+            }
+
+            let code_before_comment = raw_line.split('#').next().unwrap_or("").trim_end();
+            let continues = code_before_comment.ends_with("|>")
+                || code_before_comment.ends_with("<-")
+                || code_before_comment.ends_with('+')
+                || code_before_comment.ends_with(',');
+
+            if brace_depth <= 0 && paren_depth <= 0 && bracket_depth <= 0 && !continues {
+                chunks.push((start_line, std::mem::take(&mut buf)));
+                brace_depth = 0;
+                paren_depth = 0;
+                bracket_depth = 0;
+            }
         }
-        let Ok(ox) = self.eval_r_expression(args[0]) else {
-            return "Failed to evaluate first column".to_string();
-        };
-        let Ok(oy) = self.eval_r_expression(args[1]) else {
-            return "Failed to evaluate second column".to_string();
-        };
-        let xs = ox.as_slice();
-        let ys = oy.as_slice();
-        let len = xs.len().min(ys.len());
-        let mut raw_csv = String::from("x,y\n");
-        for i in 0..len {
-            raw_csv.push_str(&format!("{:.6},{:.6}\n", xs[i], ys[i]));
+        if !buf.trim().is_empty() {
+            chunks.push((start_line, buf));
         }
-        let name = format!("df_{}", self.workspace.datasets.len() + 1);
-        let ds = DataTable::from_csv_str(&name, raw_csv, Color32::from_rgb(56, 189, 248));
-        self.workspace.datasets.push(ds);
-        self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
-        let msg = format!("Created dataset `{}` with {} rows.", name, len);
-        self.console_logs.push(ConsoleLogEntry {
-            timestamp_tag: tag.to_string(),
-            source_line: raw_cmd.to_string(),
-            message: msg.clone(),
-            is_error: false,
-        });
-        msg
+        chunks
     }
 
-    /// Evaluates the multiline Script Editor (`evaluate_editor_script`).
+    /// Evaluates the multiline Script Editor (`evaluate_editor_script`), supporting mixed
+    /// Desmos symbolic models and full multi-line R scripts (`function`, `for`, `lm`, `|>`).
     pub fn evaluate_editor_script(&mut self) {
         self.eval_counter += 1;
         let run_id = self.eval_counter;
-
-        let lines: Vec<String> = self
-            .editor_script
-            .lines()
-            .map(|l| l.trim().to_string())
-            .collect();
+        let script_copy = self.editor_script.clone();
+        let chunks = Self::split_script_chunks(&script_copy);
 
         let mut parsed_params = 0usize;
         let mut parsed_funcs = 0usize;
         let mut error_count = 0usize;
 
-        for (idx, raw_line) in lines.iter().enumerate() {
-            let line_num = idx + 1;
-            if raw_line.is_empty() || raw_line.starts_with('#') || raw_line.starts_with("//") {
-                continue;
-            }
-
-            if raw_line.eq_ignore_ascii_case("intro-help")
-                || raw_line.eq_ignore_ascii_case("general-help")
+        for (line_num, chunk) in chunks {
+            let trimmed = chunk.trim();
+            if trimmed.eq_ignore_ascii_case("intro-help")
+                || trimmed.eq_ignore_ascii_case("general-help")
             {
-                self.execute_console_command(raw_line);
+                self.execute_console_command(trimmed);
                 continue;
             }
 
-            let Some((lhs_raw, rhs_raw)) = Self::split_assignment(raw_line) else {
-                match self.eval_r_expression(raw_line) {
-                    Ok(obj) => {
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: obj.preview_string(),
-                            is_error: false,
-                        });
+            // Single-line Desmos function definition or LaTeX parameter assignment
+            if !trimmed.contains('\n') {
+                if let Some((lhs_raw, rhs_raw)) = Self::split_assignment(trimmed) {
+                    let lhs_trim = lhs_raw.trim();
+                    let rhs_trim = rhs_raw.trim();
+
+                    if Self::is_desmos_function_lhs(lhs_trim) && !rhs_trim.starts_with("function") {
+                        let lhs_clean = Self::normalize_fn_signature(lhs_trim);
+                        match self.eval_expression_str(rhs_trim, self.probe_x, 1.0_f64) {
+                            Ok(sample_val) => {
+                                self.workspace
+                                    .set_function(lhs_clean.clone(), rhs_trim.to_string());
+                                parsed_funcs += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: trimmed.to_string(),
+                                    message: format!(
+                                        "Bound `{}` = `{}` (probe -> {:.4})",
+                                        lhs_clean, rhs_trim, sample_val
+                                    ),
+                                    is_error: false,
+                                });
+                            }
+                            Err(err) => {
+                                error_count += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: trimmed.to_string(),
+                                    message: format!("Function `{}` error: {}", lhs_clean, err),
+                                    is_error: true,
+                                });
+                            }
+                        }
+                        continue;
                     }
-                    Err(e) => {
-                        error_count += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!("Error: {}", e),
-                            is_error: true,
-                        });
+
+                    if lhs_trim.starts_with('\\') {
+                        let param_key = Self::normalize_ident_name(lhs_trim);
+                        match self.eval_parameter_rhs(rhs_trim) {
+                            Ok(val) if val.is_finite() => {
+                                self.workspace.set_parameter(param_key.clone(), val);
+                                parsed_params += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: trimmed.to_string(),
+                                    message: format!("{} = {:.6}", param_key, val),
+                                    is_error: false,
+                                });
+                            }
+                            Ok(_) => {
+                                error_count += 1;
+                            }
+                            Err(err) => {
+                                error_count += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: trimmed.to_string(),
+                                    message: format!("Parameter `{}` error: {}", param_key, err),
+                                    is_error: true,
+                                });
+                            }
+                        }
+                        continue;
                     }
                 }
-                continue;
-            };
-
-            let lhs_clean = Self::sanitize_for_meval(lhs_raw).replace(' ', "");
-            let rhs_clean = Self::sanitize_for_meval(rhs_raw);
-
-            if lhs_clean.is_empty() || rhs_clean.is_empty() {
-                error_count += 1;
-                continue;
             }
 
-            let is_explicit_fn = lhs_clean.contains('(') && lhs_clean.ends_with(')');
-
-            if is_explicit_fn {
-                match self.eval_expression_str(&rhs_clean, self.probe_x, 1.0_f64) {
-                    Ok(sample_val) => {
-                        self.workspace
-                            .set_function(lhs_clean.clone(), rhs_clean.clone());
-                        parsed_funcs += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!(
-                                "Bound `{}` = `{}` (probe -> {:.4})",
-                                lhs_clean, rhs_clean, sample_val
-                            ),
-                            is_error: false,
-                        });
+            // Execute chunk via the embedded R engine
+            match self.execute_r_code_in_workspace(trimmed) {
+                Ok((obj, stdout)) => {
+                    if let Some((lhs_raw, _)) = Self::split_assignment(trimmed) {
+                        let lhs_t = lhs_raw.trim();
+                        if Self::is_plain_ident(lhs_t) {
+                            if let Some(val) = obj.as_scalar_f64() {
+                                if val.is_finite() {
+                                    self.workspace.set_parameter(lhs_t.to_string(), val);
+                                }
+                            }
+                            parsed_params += 1;
+                        }
                     }
-                    Err(err) => {
-                        error_count += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!("Function `{}` error: {}", lhs_clean, err),
-                            is_error: true,
-                        });
-                    }
+                    let msg = if stdout.is_empty() {
+                        obj.preview_string()
+                    } else {
+                        format!("{}\n{}", stdout.join("\n"), obj.preview_string())
+                    };
+                    self.console_logs.push(ConsoleLogEntry {
+                        timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                        source_line: trimmed.lines().next().unwrap_or(trimmed).to_string(),
+                        message: msg,
+                        is_error: false,
+                    });
                 }
-            } else if let Ok(r_obj) = self.eval_r_expression(rhs_raw.trim()) {
-                match r_obj {
-                    RObject::Scalar(val) if val.is_finite() => {
-                        self.workspace.set_parameter(lhs_clean.clone(), val);
-                        parsed_params += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!("{} = {:.6}", lhs_clean, val),
-                            is_error: false,
-                        });
+                Err(r_err) => {
+                    // Fallback: try promoting `name = expr(x)` to a Desmos function
+                    if !trimmed.contains('\n') {
+                        if let Some((lhs_raw, rhs_raw)) = Self::split_assignment(trimmed) {
+                            let param_key = Self::normalize_ident_name(lhs_raw);
+                            let rhs_trim = rhs_raw.trim();
+                            if let Ok(sample_val) =
+                                self.eval_expression_str(rhs_trim, self.probe_x, 1.0_f64)
+                            {
+                                let promoted_sig = format!("{}(x)", param_key);
+                                self.workspace
+                                    .set_function(promoted_sig.clone(), rhs_trim.to_string());
+                                parsed_funcs += 1;
+                                self.console_logs.push(ConsoleLogEntry {
+                                    timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                                    source_line: trimmed.to_string(),
+                                    message: format!(
+                                        "Promoted `{}` = `{}` (probe -> {:.4})",
+                                        promoted_sig, rhs_trim, sample_val
+                                    ),
+                                    is_error: false,
+                                });
+                                continue;
+                            }
+                        }
                     }
-                    other => {
-                        let preview = other.preview_string();
-                        self.workspace.r_objects.insert(lhs_clean.clone(), other);
-                        parsed_params += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!("{} <- {}", lhs_clean, preview),
-                            is_error: false,
-                        });
-                    }
-                }
-            } else {
-                let promoted_sig = format!("{}(x)", lhs_clean);
-                match self.eval_expression_str(&rhs_clean, self.probe_x, 1.0_f64) {
-                    Ok(sample_val) => {
-                        self.workspace
-                            .set_function(promoted_sig.clone(), rhs_clean.clone());
-                        parsed_funcs += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!(
-                                "Promoted `{}` = `{}` (probe -> {:.4})",
-                                promoted_sig, rhs_clean, sample_val
-                            ),
-                            is_error: false,
-                        });
-                    }
-                    Err(err) => {
-                        error_count += 1;
-                        self.console_logs.push(ConsoleLogEntry {
-                            timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
-                            source_line: raw_line.clone(),
-                            message: format!("Could not evaluate `{}`: {}", lhs_clean, err),
-                            is_error: true,
-                        });
-                    }
+                    error_count += 1;
+                    self.console_logs.push(ConsoleLogEntry {
+                        timestamp_tag: format!("Run #{:02} L{:02}", run_id, line_num),
+                        source_line: trimmed.lines().next().unwrap_or(trimmed).to_string(),
+                        message: format!("Error: {}", r_err),
+                        is_error: true,
+                    });
                 }
             }
         }
@@ -2145,7 +1733,7 @@ impl EconCalcApp {
     }
 
     fn composite_simpson(&self, expr_str: &str, a: f64, b: f64, n: usize) -> Result<f64, String> {
-        let steps = if n % 2 == 0 { n.max(4) } else { n + 1 };
+        let steps = if n.is_multiple_of(2) { n.max(4) } else { n + 1 };
         let h = (b - a) / (steps as f64);
         let mut sum = self.eval_expression_str(expr_str, a, 10.0_f64)?
             + self.eval_expression_str(expr_str, b, 10.0_f64)?;
@@ -2430,33 +2018,11 @@ impl EconCalcApp {
     }
 
     fn format_latex_math(raw: &str) -> String {
-        let mut s = raw.to_string();
-        for (ident, latex_sym) in [
-            ("alpha", "\\alpha"),
-            ("beta", "\\beta"),
-            ("gamma", "\\gamma"),
-            ("delta", "\\delta"),
-            ("lambda", "\\lambda"),
-            ("sigma", "\\sigma"),
-            ("theta", "\\theta"),
-            ("rho", "\\rho"),
-            ("price_x", "P_x"),
-            ("price_y", "P_y"),
-            ("Y_bar", "\\bar{Y}"),
-        ] {
-            s = Self::replace_identifier_token(&s, ident, latex_sym);
-        }
-        s.replace('*', " \\cdot ")
+        math::to_latex_from_ast(raw)
     }
 
     fn substitute_params_for_tikz(&self, raw_expr: &str) -> String {
-        let mut s = self.expand_workspace_functions(raw_expr);
-        let mut pairs: Vec<(&String, &f64)> = self.workspace.parameters.iter().collect();
-        pairs.sort_by(|(a, _), (b, _)| b.len().cmp(&a.len()));
-        for (name, val) in pairs {
-            s = Self::replace_identifier_token(&s, name, &format!("({:.4})", val));
-        }
-        s
+        math::format_for_tikz(raw_expr, &self.workspace.parameters)
     }
 
     fn generate_latex_derivation(&self) -> String {
@@ -2918,6 +2484,8 @@ print(p_main)
                     self.enable_equilibrium_solver = false;
                     self.status_banner = "Workspace cleared.".to_string();
                 }
+                ui.checkbox(&mut self.smart_math_shortcuts, "α≥")
+                    .on_hover_text("Auto-convert `alpha ` -> `α `, `>=` -> `≥`, `<=` -> `≤`, `->` -> `→`");
             });
         });
 
@@ -2930,45 +2498,68 @@ print(p_main)
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_fn_sig_input)
-                            .desired_width(58.0_f32)
+                            .desired_width(54.0_f32)
                             .hint_text("f(x)"),
                     );
                     ui.label("=");
-                    ui.add(
+                    let expr_edit = ui.add(
                         egui::TextEdit::singleline(&mut self.new_fn_expr_input)
-                            .desired_width(115.0_f32)
-                            .hint_text("e^x or 1/x"),
+                            .desired_width(118.0_f32)
+                            .hint_text(r"\frac{1}{x}, y < x^2, (cos(t), sin(t))"),
                     );
+                    if expr_edit.changed() && self.smart_math_shortcuts {
+                        apply_smart_math_shortcuts(&mut self.new_fn_expr_input);
+                    }
                     if ui.button("+ Fn").clicked() {
-                        let sig =
-                            Self::sanitize_for_meval(&self.new_fn_sig_input).replace(' ', "");
-                        let expr = Self::sanitize_for_meval(&self.new_fn_expr_input);
-                        if !sig.is_empty() && !expr.is_empty() {
-                            let final_sig = if sig.contains('(') {
-                                sig
+                        let sig_raw = self.new_fn_sig_input.trim();
+                        let expr = self.new_fn_expr_input.trim().to_string();
+                        if !expr.is_empty() {
+                            let final_sig = if sig_raw.is_empty() {
+                                format!("e{}", self.workspace.functions.len() + 1)
+                            } else if sig_raw.contains('(') || sig_raw == "r" {
+                                Self::normalize_fn_signature(sig_raw)
                             } else {
-                                format!("{}(x)", sig)
+                                format!("{}(x)", Self::normalize_ident_name(sig_raw))
                             };
                             self.workspace.set_function(final_sig, expr);
                         }
                     }
                 });
+                if !self.new_fn_expr_input.trim().is_empty() {
+                    let sig_opt = (!self.new_fn_sig_input.trim().is_empty())
+                        .then_some(self.new_fn_sig_input.as_str());
+                    egui::ScrollArea::horizontal()
+                        .id_source("new_fn_live_preview_scroll")
+                        .show(ui, |ui| {
+                            render_math_preview_strip(
+                                ui,
+                                sig_opt,
+                                &self.new_fn_expr_input,
+                                &self.workspace.compiled_math.known_fn_names,
+                                14.5_f32,
+                                pal.text_primary,
+                                Some(pal.accent_blue),
+                                pal.extreme_bg,
+                                pal.border,
+                                pal.accent_red,
+                            );
+                        });
+                }
                 ui.horizontal(|ui| {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_param_name_input)
-                            .desired_width(58.0_f32)
+                            .desired_width(54.0_f32)
                             .hint_text("alpha"),
                     );
                     ui.label("=");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_param_val_input)
-                            .desired_width(115.0_f32)
+                            .desired_width(118.0_f32)
                             .hint_text("1.0"),
                     );
                     if ui.button("+ Slider").clicked() {
-                        let name =
-                            Self::sanitize_for_meval(&self.new_param_name_input).replace(' ', "");
-                        if let Ok(val) = self.new_param_val_input.trim().parse::<f64>() {
+                        let name = Self::normalize_ident_name(&self.new_param_name_input);
+                        if let Ok(val) = self.eval_parameter_rhs(&self.new_param_val_input) {
                             if !name.is_empty() && val.is_finite() {
                                 self.workspace.set_parameter(name, val);
                             }
@@ -2988,6 +2579,22 @@ print(p_main)
                         .color(pal.text_secondary),
                 );
 
+                if let Some(ref cyc) = self.workspace.compiled_math.cycle_error {
+                    egui::Frame::group(ui.style())
+                        .fill(pal.accent_red.gamma_multiply(0.14_f32))
+                        .stroke(Stroke::new(1.0_f32, pal.accent_red))
+                        .rounding(Rounding::same(5.0_f32))
+                        .inner_margin(Margin::same(5.0_f32))
+                        .show(ui, |ui| {
+                            ui.label(
+                                RichText::new(format!("⚠ {}", cyc))
+                                    .font(FontId::proportional(11.5_f32))
+                                    .color(pal.accent_red),
+                            );
+                        });
+                    ui.add_space(3.0_f32);
+                }
+
                 if self.workspace.functions.is_empty() {
                     ui.label(
                         RichText::new("No active functions. Add one above or load a Model.")
@@ -2996,7 +2603,13 @@ print(p_main)
                     );
                 } else {
                     let fn_keys: Vec<String> = self.workspace.functions.keys().cloned().collect();
+                    let existing_params: std::collections::HashSet<String> =
+                        self.workspace.parameters.keys().cloned().collect();
+                    let existing_r_objs: std::collections::HashSet<String> =
+                        self.workspace.r_objects.keys().cloned().collect();
                     let mut remove_key: Option<String> = None;
+                    let mut add_sliders: Vec<String> = Vec::new();
+                    let mut latex_copied_msg: Option<String> = None;
 
                     for (idx, sig) in fn_keys.iter().enumerate() {
                         let mut expr = self
@@ -3018,26 +2631,42 @@ print(p_main)
                             .rounding(Rounding::same(6.0_f32))
                             .inner_margin(Margin::same(6.0_f32))
                             .show(ui, |ui| {
+                                // 1. Prominent live native "Math-as-Written" typeset preview
+                                let preview = egui::ScrollArea::horizontal()
+                                    .id_source(format!("math_preview_scroll_{}", sig))
+                                    .show(ui, |ui| {
+                                        render_math_preview_strip(
+                                            ui,
+                                            Some(sig.as_str()),
+                                            &expr,
+                                            &self.workspace.compiled_math.known_fn_names,
+                                            15.5_f32,
+                                            pal.text_primary,
+                                            Some(style.color),
+                                            pal.extreme_bg,
+                                            pal.border,
+                                            pal.accent_red,
+                                        )
+                                    })
+                                    .inner;
+
+                                ui.add_space(3.0_f32);
+
+                                // 2. Inline expression editor + action buttons
                                 ui.horizontal(|ui| {
                                     ui.checkbox(&mut style.visible, "");
                                     ui.color_edit_button_srgba(&mut style.color);
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} =",
-                                            Self::format_symbolic_math(sig)
-                                        ))
-                                        .font(FontId::monospace(12.5_f32))
-                                        .strong()
-                                        .color(style.color),
-                                    );
                                     let edited = ui.add(
                                         egui::TextEdit::singleline(&mut expr)
-                                            .font(FontId::monospace(12.0_f32))
-                                            .desired_width(110.0_f32),
+                                            .font(FontId::monospace(11.8_f32))
+                                            .desired_width((ui.available_width() - 92.0_f32).max(75.0_f32)),
                                     );
                                     if edited.changed() {
-                                        let sanitized = Self::sanitize_for_meval(&expr);
-                                        self.workspace.functions.insert(sig.clone(), sanitized);
+                                        if self.smart_math_shortcuts {
+                                            apply_smart_math_shortcuts(&mut expr);
+                                        }
+                                        self.workspace.functions.insert(sig.clone(), expr.clone());
+                                        self.workspace.sync_math_cache();
                                     }
 
                                     ui.with_layout(
@@ -3061,9 +2690,169 @@ print(p_main)
                                             {
                                                 style.settings_open = !style.settings_open;
                                             }
+                                            if ui
+                                                .small_button(
+                                                    RichText::new("TeX")
+                                                        .font(FontId::monospace(10.5_f32))
+                                                        .color(pal.accent_blue),
+                                                )
+                                                .on_hover_text("Copy canonical LaTeX from AST")
+                                                .clicked()
+                                            {
+                                                ui.ctx().copy_text(preview.latex.clone());
+                                                latex_copied_msg = Some(format!(
+                                                    "Copied LaTeX: {}",
+                                                    preview.latex
+                                                ));
+                                            }
                                         },
                                     );
                                 });
+
+                                // 3. Live evaluation pill or inline syntax diagnostic
+                                if let Some(ref err) = preview.error {
+                                    let (_, col) = err.span.line_col(&expr);
+                                    ui.label(
+                                        RichText::new(format!("⚠ col {}: {}", col, err.message))
+                                            .font(FontId::monospace(11.0_f32))
+                                            .color(pal.accent_red),
+                                    );
+                                } else if let Ok(plottable) =
+                                    self.workspace.compiled_math.classify_entry(sig, &expr)
+                                {
+                                    let ext_bridge = REngineMathBridge {
+                                        r_objects: &self.workspace.r_objects,
+                                    };
+                                    let eval_ctx = self.build_eval_context(&ext_bridge);
+                                    let mut scratch = EvalScratch::new();
+
+                                    ui.horizontal_wrapped(|ui| match plottable {
+                                        PlottableEntry::ScalarOnly { compiled } => {
+                                            if let Ok(v) = compiled.eval(&eval_ctx, &[], &mut scratch)
+                                            {
+                                                if v.is_finite() {
+                                                    ui.label(
+                                                        RichText::new(format!("= {:.4}", v))
+                                                            .font(FontId::monospace(11.5_f32))
+                                                            .strong()
+                                                            .color(pal.accent_green),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        PlottableEntry::Explicit1D { compiled } => {
+                                            if let Ok(v) = compiled.eval(
+                                                &eval_ctx,
+                                                &[
+                                                    ("x", self.probe_x),
+                                                    ("y", 1.0_f64),
+                                                    ("L", self.probe_x),
+                                                    ("K", 1.0_f64),
+                                                    ("Q", self.probe_x),
+                                                    ("Y", self.probe_x),
+                                                ],
+                                                &mut scratch,
+                                            ) {
+                                                if v.is_finite() {
+                                                    ui.label(
+                                                        RichText::new(format!(
+                                                            "@ x={:.2} → {:.4}",
+                                                            self.probe_x, v
+                                                        ))
+                                                        .font(FontId::monospace(10.8_f32))
+                                                        .color(pal.text_muted),
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        PlottableEntry::ImplicitEquation { .. } => {
+                                            ui.label(
+                                                RichText::new("Implicit Contour")
+                                                    .font(FontId::monospace(10.5_f32))
+                                                    .color(pal.accent_purple),
+                                            );
+                                        }
+                                        PlottableEntry::ExplicitYInequality { .. }
+                                        | PlottableEntry::ImplicitInequality { .. } => {
+                                            ui.label(
+                                                RichText::new("Shaded Inequality")
+                                                    .font(FontId::monospace(10.5_f32))
+                                                    .color(pal.accent_amber),
+                                            );
+                                        }
+                                        PlottableEntry::Parametric { .. } => {
+                                            ui.label(
+                                                RichText::new("Parametric Curve")
+                                                    .font(FontId::monospace(10.5_f32))
+                                                    .color(pal.accent_green),
+                                            );
+                                        }
+                                        PlottableEntry::Polar { .. } => {
+                                            ui.label(
+                                                RichText::new("Polar Curve r(θ)")
+                                                    .font(FontId::monospace(10.5_f32))
+                                                    .color(pal.accent_blue),
+                                            );
+                                        }
+                                    });
+                                }
+
+                                // 4. Automatic unbound parameter discovery -> reactive slider creation
+                                if let Some(ref stmt) = preview.parsed_statement {
+                                    let mut bound_locals = std::collections::HashSet::new();
+                                    if let Some((_, params)) = math::parse_function_signature(sig) {
+                                        for p in params {
+                                            bound_locals.insert(p);
+                                        }
+                                    }
+                                    let mut unbound = Vec::new();
+                                    let mut collect_from = |e: &math::SpannedExpr| {
+                                        for sym in math::graph::discover_unbound_symbols(
+                                            e,
+                                            &bound_locals,
+                                            &self.workspace.compiled_math.known_fn_names,
+                                            &existing_params,
+                                            &existing_r_objs,
+                                        ) {
+                                            if !unbound.contains(&sym) {
+                                                unbound.push(sym);
+                                            }
+                                        }
+                                    };
+                                    match stmt {
+                                        math::MathStatement::Expr(e)
+                                        | math::MathStatement::FunctionDef { body: e, .. }
+                                        | math::MathStatement::ParamAssign { value: e, .. }
+                                        | math::MathStatement::Polar { r_expr: e, .. } => {
+                                            collect_from(e);
+                                        }
+                                        math::MathStatement::Equation { lhs, rhs }
+                                        | math::MathStatement::Inequality { lhs, rhs, .. } => {
+                                            collect_from(lhs);
+                                            collect_from(rhs);
+                                        }
+                                        math::MathStatement::Parametric { x_expr, y_expr, .. } => {
+                                            collect_from(x_expr);
+                                            collect_from(y_expr);
+                                        }
+                                    }
+                                    if !unbound.is_empty() {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label(
+                                                RichText::new("Add slider:")
+                                                    .font(FontId::proportional(11.0_f32))
+                                                    .color(pal.accent_amber),
+                                            );
+                                            for sym in &unbound {
+                                                let disp = math::ast::ident_to_pretty_unicode(sym);
+                                                if ui.small_button(format!("+ {}", disp)).clicked()
+                                                {
+                                                    add_sliders.push(sym.clone());
+                                                }
+                                            }
+                                        });
+                                    }
+                                }
 
                                 if style.settings_open {
                                     ui.separator();
@@ -3147,6 +2936,13 @@ print(p_main)
                     if let Some(k) = remove_key {
                         self.workspace.functions.remove(&k);
                         self.workspace.function_styles.remove(&k);
+                        self.workspace.sync_math_cache();
+                    }
+                    for sym in add_sliders {
+                        self.workspace.set_parameter(sym, 1.0_f64);
+                    }
+                    if let Some(msg) = latex_copied_msg {
+                        self.status_banner = msg;
                     }
                 }
 
@@ -3211,7 +3007,7 @@ print(p_main)
                                         self.workspace.parameters.insert(name.clone(), val);
                                         self.workspace
                                             .r_objects
-                                            .insert(name.clone(), RObject::Scalar(val));
+                                            .insert(name.clone(), RObject::scalar(val));
                                     }
 
                                     ui.with_layout(
@@ -3253,7 +3049,7 @@ print(p_main)
                                     self.workspace.parameters.insert(name.clone(), val);
                                     self.workspace
                                         .r_objects
-                                        .insert(name.clone(), RObject::Scalar(val));
+                                        .insert(name.clone(), RObject::scalar(val));
                                 }
 
                                 if spec.edit_bounds_open {
@@ -3334,7 +3130,7 @@ print(p_main)
         });
         ui.label(
             RichText::new(
-                "Create vectors via `v <- c(1,2,3)`, `rep(5,4)`, `seq(0,10,2)` in Console.",
+                "Supports `data.frame()`, `matrix()`, `list()`, `function()`, `lm(y ~ x, data = df)`, `|>`.",
             )
             .font(FontId::proportional(11.5_f32))
             .color(pal.text_muted),
@@ -3346,7 +3142,7 @@ print(p_main)
             .show(ui, |ui| {
                 let keys: Vec<String> = self.workspace.r_objects.keys().cloned().collect();
                 let mut remove_obj: Option<String> = None;
-                let mut plot_vec: Option<String> = None;
+                let mut run_console_cmd: Option<String> = None;
 
                 for k in keys {
                     let Some(obj) = self.workspace.r_objects.get(&k).cloned() else {
@@ -3367,7 +3163,7 @@ print(p_main)
                                 );
                                 ui.label(
                                     RichText::new(obj.type_summary())
-                                        .font(FontId::monospace(11.0_f32))
+                                        .font(FontId::monospace(10.8_f32))
                                         .color(pal.text_muted),
                                 );
                                 ui.with_layout(
@@ -3379,17 +3175,143 @@ print(p_main)
                                         {
                                             remove_obj = Some(k.clone());
                                         }
-                                        if matches!(obj, RObject::Vector(_))
+                                        if matches!(&obj, RObject::Numeric(v) if v.len() >= 2)
                                             && ui.small_button("📈 Plot").clicked()
                                         {
-                                            plot_vec = Some(k.clone());
+                                            run_console_cmd = Some(format!("plot({})", k));
+                                        }
+                                        if obj.is_lm_model() {
+                                            if ui.small_button("📈 Fit").clicked() {
+                                                run_console_cmd =
+                                                    Some(format!("plot(fitted({}))", k));
+                                            }
+                                            if ui.small_button("Summary").clicked() {
+                                                run_console_cmd =
+                                                    Some(format!("summary({})", k));
+                                            }
                                         }
                                     },
                                 );
                             });
-                            ui.monospace(
-                                RichText::new(obj.preview_string()).color(pal.text_primary),
-                            );
+
+                            match &obj {
+                                RObject::DataFrame { columns, row_count } => {
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(format!(
+                                            "Inspect {} columns ({} rows)",
+                                            columns.len(),
+                                            row_count
+                                        ))
+                                        .font(FontId::proportional(11.5_f32))
+                                        .color(pal.text_secondary),
+                                    )
+                                    .id_source(format!("r_df_inspect_{}", k))
+                                    .show(ui, |ui| {
+                                        let col_names: Vec<String> =
+                                            columns.keys().cloned().collect();
+                                        if col_names.len() >= 2
+                                            && ui
+                                                .small_button(format!(
+                                                    "📈 Plot {}${} vs {}${}",
+                                                    k, col_names[0], k, col_names[1]
+                                                ))
+                                                .clicked()
+                                        {
+                                            run_console_cmd = Some(format!(
+                                                "plot({}${}, {}${})",
+                                                k, col_names[0], k, col_names[1]
+                                            ));
+                                        }
+                                        for (col_name, col_val) in columns {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.monospace(
+                                                    RichText::new(format!("${}", col_name))
+                                                        .strong()
+                                                        .color(pal.accent_green),
+                                                );
+                                                ui.monospace(
+                                                    RichText::new(col_val.type_summary())
+                                                        .color(pal.text_muted),
+                                                );
+                                                if ui.small_button("📈").clicked() {
+                                                    run_console_cmd = Some(format!(
+                                                        "plot({}${})",
+                                                        k, col_name
+                                                    ));
+                                                }
+                                            });
+                                            ui.monospace(
+                                                RichText::new(format!(
+                                                    "  {}",
+                                                    col_val.preview_string()
+                                                ))
+                                                .font(FontId::monospace(11.0_f32))
+                                                .color(pal.text_primary),
+                                            );
+                                        }
+                                    });
+                                }
+                                RObject::Matrix { nrow, ncol, .. } => {
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(format!("Matrix Grid [{} × {}]", nrow, ncol))
+                                            .font(FontId::proportional(11.5_f32))
+                                            .color(pal.text_secondary),
+                                    )
+                                    .id_source(format!("r_mat_inspect_{}", k))
+                                    .show(ui, |ui| {
+                                        ui.monospace(
+                                            RichText::new(obj.preview_string())
+                                                .font(FontId::monospace(11.0_f32))
+                                                .color(pal.text_primary),
+                                        );
+                                    });
+                                }
+                                RObject::List(map) => {
+                                    let hdr = if obj.is_lm_model() {
+                                        format!("lm() Model Fields ({})", map.len())
+                                    } else {
+                                        format!("List Fields ({})", map.len())
+                                    };
+                                    egui::CollapsingHeader::new(
+                                        RichText::new(hdr)
+                                            .font(FontId::proportional(11.5_f32))
+                                            .color(pal.text_secondary),
+                                    )
+                                    .id_source(format!("r_list_inspect_{}", k))
+                                    .show(ui, |ui| {
+                                        for (field, fval) in map {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.monospace(
+                                                    RichText::new(format!("${}", field))
+                                                        .strong()
+                                                        .color(pal.accent_purple),
+                                                );
+                                                ui.monospace(
+                                                    RichText::new(fval.preview_string())
+                                                        .font(FontId::monospace(11.0_f32))
+                                                        .color(pal.text_primary),
+                                                );
+                                            });
+                                        }
+                                    });
+                                }
+                                RObject::Closure { .. } => {
+                                    ui.monospace(
+                                        RichText::new(
+                                            obj.closure_signature()
+                                                .unwrap_or_else(|| "function()".to_string()),
+                                        )
+                                        .color(pal.accent_amber),
+                                    );
+                                }
+                                _ => {
+                                    ui.monospace(
+                                        RichText::new(obj.preview_string())
+                                            .font(FontId::monospace(11.5_f32))
+                                            .color(pal.text_primary),
+                                    );
+                                }
+                            }
                         });
                     ui.add_space(3.0_f32);
                 }
@@ -3398,8 +3320,7 @@ print(p_main)
                     self.workspace.r_objects.remove(&k);
                     self.workspace.parameters.remove(&k);
                 }
-                if let Some(vname) = plot_vec {
-                    let cmd = format!("plot({})", vname);
+                if let Some(cmd) = run_console_cmd {
                     self.execute_console_command(&cmd);
                 }
             });
@@ -3813,6 +3734,11 @@ print(p_main)
                     self.domain_max
                 };
 
+            let ext_bridge = REngineMathBridge {
+                r_objects: &self.workspace.r_objects,
+            };
+            let eval_ctx = self.build_eval_context(&ext_bridge);
+
             for (idx, (sig, expr)) in self.workspace.functions.iter().enumerate() {
                 let style = self
                     .workspace
@@ -3825,28 +3751,206 @@ print(p_main)
                     continue;
                 }
 
+                let series_label = format!("{} = {}", Self::format_symbolic_math(sig), expr);
+
+                // Live R scatter/line layer when referencing R vectors, `df$col`, `(df$x, df$y)`, or `predict(fit)`
+                if let Some(r_pts) =
+                    crate::r_engine::try_extract_r_plot_series(expr, &self.workspace.r_objects)
+                {
+                    plot_ui.line(
+                        Line::new(PlotPoints::from(r_pts.clone()))
+                            .name(&series_label)
+                            .width(style.stroke_width)
+                            .style(style.line_style.to_egui())
+                            .color(style.color),
+                    );
+                    plot_ui.points(
+                        Points::new(PlotPoints::from(r_pts))
+                            .radius(style.stroke_width + 2.0_f32)
+                            .color(style.color),
+                    );
+                    continue;
+                }
+
                 let (s_min, s_max) = if let Some((cmin, cmax)) = style.custom_domain {
                     (cmin.max(global_sample_min), cmax.min(global_sample_max))
                 } else {
                     (global_sample_min, global_sample_max)
                 };
 
-                if s_max <= s_min {
+                let Ok(plottable) = self.workspace.compiled_math.classify_entry(sig, expr) else {
                     continue;
-                }
+                };
 
-                let series_label = format!("{} = {}", Self::format_symbolic_math(sig), expr);
-                let branches = self.sample_function_branches(
-                    expr,
-                    s_min,
-                    s_max,
-                    vis_min_y,
-                    vis_max_y,
-                    self.curve_samples,
-                );
-
-                match style.role {
-                    FunctionPlotRole::StandardCurve => {
+                match plottable {
+                    PlottableEntry::Explicit1D { compiled } => {
+                        if s_max <= s_min {
+                            continue;
+                        }
+                        let branches = math::sample_1d_branches(
+                            &compiled,
+                            &eval_ctx,
+                            s_min,
+                            s_max,
+                            vis_min_y,
+                            vis_max_y,
+                            self.curve_samples,
+                            self.asymptote_jump_factor,
+                        );
+                        match style.role {
+                            FunctionPlotRole::StandardCurve => {
+                                for branch in branches {
+                                    plot_ui.line(
+                                        Line::new(PlotPoints::from(branch))
+                                            .name(&series_label)
+                                            .width(style.stroke_width)
+                                            .style(style.line_style.to_egui())
+                                            .color(style.color),
+                                    );
+                                }
+                            }
+                            FunctionPlotRole::AreaUnderCurve => {
+                                for branch in branches {
+                                    if branch.len() >= 2 {
+                                        let mut poly = Vec::with_capacity(branch.len() + 2);
+                                        poly.push([branch[0][0], 0.0_f64]);
+                                        poly.extend_from_slice(&branch);
+                                        poly.push([branch[branch.len() - 1][0], 0.0_f64]);
+                                        plot_ui.polygon(
+                                            Polygon::new(PlotPoints::from(poly))
+                                                .name(&series_label)
+                                                .fill_color(style.color.gamma_multiply(0.22_f32))
+                                                .stroke(Stroke::new(
+                                                    style.stroke_width,
+                                                    style.color,
+                                                )),
+                                        );
+                                    }
+                                }
+                            }
+                            FunctionPlotRole::SampledPoints => {
+                                for branch in branches {
+                                    plot_ui.points(
+                                        Points::new(PlotPoints::from(branch))
+                                            .name(&series_label)
+                                            .radius(style.stroke_width + 1.5_f32)
+                                            .color(style.color),
+                                    );
+                                }
+                            }
+                            FunctionPlotRole::Surface3DOnly => {}
+                        }
+                    }
+                    PlottableEntry::ImplicitEquation { diff_compiled } => {
+                        let contours = math::sample_implicit_contours(
+                            &diff_compiled,
+                            &eval_ctx,
+                            global_sample_min,
+                            global_sample_max,
+                            vis_min_y,
+                            vis_max_y,
+                            72,
+                            72,
+                        );
+                        for chain in contours {
+                            plot_ui.line(
+                                Line::new(PlotPoints::from(chain))
+                                    .name(&series_label)
+                                    .width(style.stroke_width)
+                                    .style(style.line_style.to_egui())
+                                    .color(style.color),
+                            );
+                        }
+                    }
+                    PlottableEntry::ExplicitYInequality { op, rhs_compiled } => {
+                        if s_max <= s_min {
+                            continue;
+                        }
+                        let region = math::sample_explicit_y_inequality(
+                            &rhs_compiled,
+                            op,
+                            &eval_ctx,
+                            s_min,
+                            s_max,
+                            vis_min_y,
+                            vis_max_y,
+                            self.curve_samples,
+                            self.asymptote_jump_factor,
+                        );
+                        for poly in region.shaded_polygons {
+                            plot_ui.polygon(
+                                Polygon::new(PlotPoints::from(poly))
+                                    .name(&series_label)
+                                    .fill_color(style.color.gamma_multiply(0.18_f32))
+                                    .stroke(Stroke::NONE),
+                            );
+                        }
+                        let bound_style = if region.strict {
+                            LineStyle::Dashed { length: 7.0_f32 }
+                        } else {
+                            style.line_style.to_egui()
+                        };
+                        for branch in region.boundary_curves {
+                            plot_ui.line(
+                                Line::new(PlotPoints::from(branch))
+                                    .name(&series_label)
+                                    .width(style.stroke_width)
+                                    .style(bound_style)
+                                    .color(style.color),
+                            );
+                        }
+                    }
+                    PlottableEntry::ImplicitInequality { op, diff_compiled } => {
+                        let region = math::sample_implicit_2d_inequality(
+                            &diff_compiled,
+                            op,
+                            &eval_ctx,
+                            global_sample_min,
+                            global_sample_max,
+                            vis_min_y,
+                            vis_max_y,
+                            64,
+                            64,
+                        );
+                        for poly in region.shaded_polygons {
+                            plot_ui.polygon(
+                                Polygon::new(PlotPoints::from(poly))
+                                    .fill_color(style.color.gamma_multiply(0.18_f32))
+                                    .stroke(Stroke::NONE),
+                            );
+                        }
+                        let bound_style = if region.strict {
+                            LineStyle::Dashed { length: 7.0_f32 }
+                        } else {
+                            style.line_style.to_egui()
+                        };
+                        for chain in region.boundary_curves {
+                            plot_ui.line(
+                                Line::new(PlotPoints::from(chain))
+                                    .name(&series_label)
+                                    .width(style.stroke_width)
+                                    .style(bound_style)
+                                    .color(style.color),
+                            );
+                        }
+                    }
+                    PlottableEntry::Parametric {
+                        param,
+                        x_compiled,
+                        y_compiled,
+                    } => {
+                        let (t0, t1) = style
+                            .custom_domain
+                            .unwrap_or((0.0_f64, std::f64::consts::TAU));
+                        let branches = math::sample_parametric_branches(
+                            &x_compiled,
+                            &y_compiled,
+                            &param,
+                            &eval_ctx,
+                            t0,
+                            t1,
+                            self.curve_samples,
+                        );
                         for branch in branches {
                             plot_ui.line(
                                 Line::new(PlotPoints::from(branch))
@@ -3857,33 +3961,29 @@ print(p_main)
                             );
                         }
                     }
-                    FunctionPlotRole::AreaUnderCurve => {
+                    PlottableEntry::Polar { param, r_compiled } => {
+                        let (t0, t1) = style
+                            .custom_domain
+                            .unwrap_or((0.0_f64, std::f64::consts::TAU));
+                        let branches = math::sample_polar_branches(
+                            &r_compiled,
+                            &param,
+                            &eval_ctx,
+                            t0,
+                            t1,
+                            self.curve_samples,
+                        );
                         for branch in branches {
-                            if branch.len() >= 2 {
-                                let mut poly = Vec::with_capacity(branch.len() + 2);
-                                poly.push([branch[0][0], 0.0_f64]);
-                                poly.extend_from_slice(&branch);
-                                poly.push([branch[branch.len() - 1][0], 0.0_f64]);
-                                plot_ui.polygon(
-                                    Polygon::new(PlotPoints::from(poly))
-                                        .name(&series_label)
-                                        .fill_color(style.color.gamma_multiply(0.22_f32))
-                                        .stroke(Stroke::new(style.stroke_width, style.color)),
-                                );
-                            }
-                        }
-                    }
-                    FunctionPlotRole::SampledPoints => {
-                        for branch in branches {
-                            plot_ui.points(
-                                Points::new(PlotPoints::from(branch))
+                            plot_ui.line(
+                                Line::new(PlotPoints::from(branch))
                                     .name(&series_label)
-                                    .radius(style.stroke_width + 1.5_f32)
+                                    .width(style.stroke_width)
+                                    .style(style.line_style.to_egui())
                                     .color(style.color),
                             );
                         }
                     }
-                    FunctionPlotRole::Surface3DOnly => {}
+                    PlottableEntry::ScalarOnly { .. } => {}
                 }
             }
 
@@ -4083,8 +4183,17 @@ print(p_main)
             .or_else(|| self.workspace.functions.values().next().cloned())
             .unwrap_or_else(|| "sin(x) * cos(y)".to_string());
 
-        let expanded = self.expand_workspace_functions(&expr_str);
-        let mut ctx = self.build_meval_context(0.0_f64, 0.0_f64);
+        let compiled_3d = math::parse_expr_with_known_fns(
+            &expr_str,
+            &self.workspace.compiled_math.known_fn_names,
+        )
+        .ok()
+        .map(|ast| CompiledExpr::compile(&ast));
+        let ext_bridge = REngineMathBridge {
+            r_objects: &self.workspace.r_objects,
+        };
+        let eval_ctx = self.build_eval_context(&ext_bridge);
+        let mut scratch_3d = EvalScratch::new();
 
         let n = self.surface_resolution.clamp(8, 50);
         let x_min = self.domain_min;
@@ -4096,22 +4205,40 @@ print(p_main)
         let mut z_min = f64::INFINITY;
         let mut z_max = f64::NEG_INFINITY;
 
-        for (i, row) in z_grid.iter_mut().enumerate() {
-            let x = x_min + (x_max - x_min) * (i as f64) / (n as f64);
-            ctx.var("x", x);
-            ctx.var("L", x);
-            for (j, cell) in row.iter_mut().enumerate() {
-                let y = y_min + (y_max - y_min) * (j as f64) / (n as f64);
-                ctx.var("y", y);
-                ctx.var("K", y);
-                if let Ok(z) = meval::eval_str_with_context(&expanded, &ctx) {
-                    if z.is_finite() && z.abs() < 1e6_f64 {
-                        *cell = z;
-                        if z < z_min {
-                            z_min = z;
-                        }
-                        if z > z_max {
-                            z_max = z;
+        if let Some(ref c_expr) = compiled_3d {
+            c_expr.bind_slots(
+                &eval_ctx,
+                &[("x", x_min), ("y", y_min), ("L", x_min), ("K", y_min)],
+                &mut scratch_3d,
+            );
+            let x_slots: Vec<usize> = ["x", "L"]
+                .iter()
+                .filter_map(|s| c_expr.slot_of(s))
+                .collect();
+            let y_slots: Vec<usize> = ["y", "K"]
+                .iter()
+                .filter_map(|s| c_expr.slot_of(s))
+                .collect();
+
+            for (i, row) in z_grid.iter_mut().enumerate() {
+                let x = x_min + (x_max - x_min) * (i as f64) / (n as f64);
+                for &s in &x_slots {
+                    c_expr.set_slot(s, x, &mut scratch_3d);
+                }
+                for (j, cell) in row.iter_mut().enumerate() {
+                    let y = y_min + (y_max - y_min) * (j as f64) / (n as f64);
+                    for &s in &y_slots {
+                        c_expr.set_slot(s, y, &mut scratch_3d);
+                    }
+                    if let Ok(z) = c_expr.eval_with_bound_slots(&eval_ctx, &mut scratch_3d) {
+                        if z.is_finite() && z.abs() < 1e6_f64 {
+                            *cell = z;
+                            if z < z_min {
+                                z_min = z;
+                            }
+                            if z > z_max {
+                                z_max = z;
+                            }
                         }
                     }
                 }
@@ -5005,17 +5132,11 @@ mod tests {
     use crate::exporter::{ARCH_FULL_LABEL, ARCH_SHORT_LABEL};
 
     #[test]
-    fn test_sanitize_latex_for_meval() {
-        let raw = r"\alpha \cdot x^{\beta} + \times 2";
-        let sanitized = EconCalcApp::sanitize_for_meval(raw);
-        assert_eq!(sanitized, "alpha * x^(beta) + * 2");
-    }
-
-    #[test]
-    fn test_replace_identifier_word_boundary() {
-        let expr = "alpha + alpha_1 + price_x * x";
-        let out = EconCalcApp::replace_identifier_token(expr, "alpha", "\\alpha");
-        assert_eq!(out, "\\alpha + alpha_1 + price_x * x");
+    fn test_ast_latex_and_ident_normalization() {
+        let latex = math::to_latex_from_ast(r"\alpha \cdot x^{\beta} + \frac{a}{b}");
+        assert_eq!(latex, r"\alpha \cdot x^{\beta} + \frac{a}{b}");
+        assert_eq!(EconCalcApp::normalize_ident_name(r"\alpha"), "alpha");
+        assert_eq!(EconCalcApp::normalize_ident_name(r"\bar{Y}"), "Y_bar");
     }
 
     #[test]
@@ -5051,6 +5172,7 @@ mod tests {
             new_fn_expr_input: String::new(),
             new_param_name_input: String::new(),
             new_param_val_input: String::new(),
+            smart_math_shortcuts: true,
             editor_script: String::new(),
             console_logs: Vec::new(),
             eval_counter: 0,
@@ -5156,6 +5278,7 @@ mod tests {
             new_fn_expr_input: String::new(),
             new_param_name_input: String::new(),
             new_param_val_input: String::new(),
+            smart_math_shortcuts: true,
             editor_script: String::new(),
             console_logs: Vec::new(),
             eval_counter: 0,
@@ -5200,24 +5323,35 @@ mod tests {
 
         assert_eq!(
             app.eval_r_expression("2 + 3 * 4").unwrap(),
-            RObject::Scalar(14.0_f64)
+            RObject::scalar(14.0_f64)
         );
 
         app.execute_console_command("v <- c(2, 4, 6, 8)");
         assert_eq!(
             app.workspace.r_objects.get("v"),
-            Some(&RObject::Vector(vec![2.0_f64, 4.0_f64, 6.0_f64, 8.0_f64]))
+            Some(&RObject::numeric_vec(vec![2.0_f64, 4.0_f64, 6.0_f64, 8.0_f64]))
         );
 
         assert_eq!(
             app.eval_r_expression("rep(3, 4)").unwrap(),
-            RObject::Vector(vec![3.0_f64, 3.0_f64, 3.0_f64, 3.0_f64])
+            RObject::numeric_vec(vec![3.0_f64, 3.0_f64, 3.0_f64, 3.0_f64])
         );
 
         assert_eq!(
             app.eval_r_expression("mean(v)").unwrap(),
-            RObject::Scalar(5.0_f64)
+            RObject::scalar(5.0_f64)
         );
+
+        // End-to-end Desmos <-> R bridge + lm() integration inside EconCalcApp
+        app.workspace.set_parameter("k", 2.0_f64);
+        app.workspace.set_function("q(x)", "k * x + 1");
+        let bridged = app.eval_r_expression("q(seq(1, 3, by = 1))").unwrap();
+        assert_eq!(bridged, RObject::numeric_vec(vec![3.0_f64, 5.0_f64, 7.0_f64]));
+
+        app.execute_console_command("df <- data.frame(x = 1:4, y = c(3, 5, 7, 9))");
+        app.execute_console_command("fit <- lm(y ~ x, data = df)");
+        let pred_in_desmos = app.eval_expression_str("fit(10)", 0.0_f64, 0.0_f64).unwrap();
+        assert!((pred_in_desmos - 21.0_f64).abs() < 1e-8_f64);
 
         let intro = app.execute_console_command("intro-help");
         assert!(intro.contains("INTRO-HELP"));

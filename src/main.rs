@@ -1,7 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod collections;
 mod exporter;
+mod math;
+mod r_engine;
+mod ui;
 
 use app::EconCalcApp;
 use eframe::egui;

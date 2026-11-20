@@ -6,19 +6,25 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 pub const ARCH_SHORT_LABEL: &str = "ARM64 Snapdragon";
 #[cfg(target_arch = "aarch64")]
+#[allow(dead_code)]
 pub const ARCH_FULL_LABEL: &str =
     "Windows 11 ARM64 (Qualcomm Snapdragon / aarch64-pc-windows-msvc)";
 
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 pub const ARCH_SHORT_LABEL: &str = "x64 Intel/AMD";
 #[cfg(target_arch = "x86_64")]
+#[allow(dead_code)]
 pub const ARCH_FULL_LABEL: &str = "Windows 10/11 x64 (Intel & AMD / x86_64-pc-windows-msvc)";
 
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[allow(dead_code)]
 pub const ARCH_SHORT_LABEL: &str = std::env::consts::ARCH;
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+#[allow(dead_code)]
 pub const ARCH_FULL_LABEL: &str = std::env::consts::ARCH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +83,7 @@ pub struct GridRow {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ExportPayload {
     pub model_kind: ActiveModelKind,
     pub report_format: ReportFormat,
