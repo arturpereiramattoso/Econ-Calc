@@ -12,7 +12,7 @@ use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let viewport = egui::ViewportBuilder::default()
-        .with_title("EconCalc Studio")
+        .with_title("Oikonomos (Οἰκονόμος)")
         .with_inner_size([1280.0_f32, 780.0_f32])
         .with_min_inner_size([800.0_f32, 520.0_f32]);
 
@@ -22,7 +22,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "econ-calc",
+        "oikonomos",
         native_options,
         Box::new(|cc| Ok(Box::new(EconCalcApp::new(cc)))),
     )

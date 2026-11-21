@@ -266,12 +266,12 @@ pub struct FunctionStyle {
 impl FunctionStyle {
     pub fn default_for_index(idx: usize) -> Self {
         let palette = [
-            Color32::from_rgb(248, 113, 113), // Coral / Neon Red (#F87171)
-            Color32::from_rgb(56, 189, 248),  // Sky Blue (#38BDF8)
-            Color32::from_rgb(52, 211, 153),  // Emerald (#34D399)
-            Color32::from_rgb(167, 139, 250), // Violet (#A78BFA)
-            Color32::from_rgb(251, 191, 36),  // Amber (#FBBF24)
-            Color32::from_rgb(236, 72, 153),  // Pink (#EC4899)
+            Color32::from_rgb(184, 74, 57),  // Cinnabar Rubric / Kinnabari (#B84A39)
+            Color32::from_rgb(72, 118, 168), // Lapis Lazuli (#4876A8)
+            Color32::from_rgb(76, 142, 104), // Malachite / Prasinos (#4C8E68)
+            Color32::from_rgb(196, 152, 68), // Ochre Gold / Chrysochra (#C49844)
+            Color32::from_rgb(142, 92, 130), // Imperial Porphyry (#8E5C82)
+            Color32::from_rgb(168, 104, 62), // Burnt Sienna (#A8683E)
         ];
         Self {
             visible: true,
@@ -569,10 +569,9 @@ pub fn render_gutter_curve_badge(
     let p = ui.painter();
 
     if visible {
-        p.circle_filled(center, radius + 1.5_f32, color.gamma_multiply(0.22_f32));
         p.circle_filled(center, radius, color);
-        p.circle_stroke(center, radius, Stroke::new(1.0_f32, Color32::WHITE.gamma_multiply(0.35_f32)));
-        let ink = Color32::from_rgb(14, 18, 26);
+        p.circle_stroke(center, radius, Stroke::new(1.0_f32, pal.border));
+        let ink = Color32::from_rgb(238, 232, 218);
         let y = center.y;
         match (line_style, show_points) {
             (_, true) => {
@@ -656,7 +655,7 @@ pub fn render_curve_appearance_controls(
         );
     });
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Glow / α:").color(pal.text_secondary));
+        ui.label(RichText::new("Opacity (α):").color(pal.text_secondary));
         ui.add(
             egui::Slider::new(&mut style.opacity, 0.1_f32..=1.0_f32)
                 .max_decimals(2),

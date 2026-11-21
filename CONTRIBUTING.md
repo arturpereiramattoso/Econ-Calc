@@ -1,6 +1,6 @@
-# Contributing to Econ-Calc
+# Contributing to Oikonomos
 
-Thank you for your interest in helping build **Econ-Calc**! Because our core promise is a **100% offline, native Rust app that runs well even on 2–4 GB RAM hardware** while scaling cleanly to workstation workflows, we follow strict engineering guardrails.
+Thank you for your interest in helping build **Oikonomos** (formerly Econ-Calc)! Because our core promise is a **100% offline, native Rust app that runs well even on 2–4 GB RAM hardware** while scaling cleanly to workstation workflows, we follow strict engineering guardrails.
 
 ---
 

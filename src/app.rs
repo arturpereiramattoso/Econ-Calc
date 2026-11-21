@@ -168,7 +168,7 @@ x,y
         ws.datasets.push(DataTable::from_csv_str(
             "empirical_sample",
             ws.csv_scratchpad.clone(),
-            Color32::from_rgb(239, 68, 68),
+            Color32::from_rgb(184, 74, 57),
         ));
 
         ws
@@ -556,9 +556,9 @@ enum SurfaceColorMap {
 impl SurfaceColorMap {
     fn label(self) -> &'static str {
         match self {
-            SurfaceColorMap::OceanThermal => "Ocean Thermal",
-            SurfaceColorMap::Viridis => "Viridis",
-            SurfaceColorMap::CoolWarm => "Cool-Warm",
+            SurfaceColorMap::OceanThermal => "Lapis & Ochre",
+            SurfaceColorMap::Viridis => "Malachite & Gold",
+            SurfaceColorMap::CoolWarm => "Lapis & Cinnabar",
         }
     }
 
@@ -566,23 +566,26 @@ impl SurfaceColorMap {
         let t = t.clamp(0.0_f32, 1.0_f32);
         match self {
             SurfaceColorMap::OceanThermal => {
-                let r = (30.0_f32 + 205.0_f32 * t) as u8;
-                let g = (105.0_f32 + 120.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
-                let b = (240.0_f32 - 180.0_f32 * t) as u8;
+                // Deep Lapis Lazuli (#2E527E) -> Warm Limestone -> Ochre Gold (#C69C4E)
+                let r = (46.0_f32 + 152.0_f32 * t) as u8;
+                let g = (82.0_f32 + 78.0_f32 * t + 24.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
+                let b = (126.0_f32 - 48.0_f32 * t) as u8;
                 (r, g, b)
             }
             SurfaceColorMap::Viridis => {
-                let r = (68.0_f32 + 185.0_f32 * t * t) as u8;
-                let g = (1.0_f32 + 215.0_f32 * t) as u8;
-                let b = (84.0_f32 + 90.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())
-                    - 50.0_f32 * t)
-                    .clamp(20.0_f32, 255.0_f32) as u8;
+                // Deep Monastic Umber/Malachite (#264E3A) -> Verdigris -> Ochre Gold (#CEA24E)
+                let r = (38.0_f32 + 168.0_f32 * t * t) as u8;
+                let g = (78.0_f32 + 86.0_f32 * t) as u8;
+                let b = (58.0_f32 + 30.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())
+                    - 10.0_f32 * t)
+                    .clamp(28.0_f32, 220.0_f32) as u8;
                 (r, g, b)
             }
             SurfaceColorMap::CoolWarm => {
-                let r = (59.0_f32 + 180.0_f32 * t) as u8;
-                let g = (76.0_f32 + 110.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
-                let b = (192.0_f32 - 155.0_f32 * t) as u8;
+                // Lapis Lazuli (#34567E) -> Parchment -> Cinnabar Rubric (#B84A39)
+                let r = (52.0_f32 + 132.0_f32 * t) as u8;
+                let g = (86.0_f32 - 12.0_f32 * t + 42.0_f32 * (1.0_f32 - (2.0_f32 * t - 1.0_f32).abs())) as u8;
+                let b = (126.0_f32 - 69.0_f32 * t) as u8;
                 (r, g, b)
             }
         }
@@ -973,7 +976,7 @@ impl EconCalcApp {
             editor_script: initial_script,
             console_logs: Vec::new(),
             eval_counter: 0,
-            status_banner: "Ready — Type `intro-help` or `general-help` in Console."
+            status_banner: "Oikonomos (Οἰκονόμος) — Ready. Type `intro-help` or `general-help` in Console."
                 .to_string(),
             domain_min: 0.2_f64,
             domain_max: 25.0_f64,
@@ -1509,7 +1512,7 @@ impl EconCalcApp {
             equilibrium: eq,
         });
         self.status_banner =
-            "📌 Frozen comparative-statics baseline — move sliders to compare Δx*, Δy*."
+            "† Frozen comparative-statics baseline — move sliders to compare Δx*, Δy*."
                 .to_string();
     }
 
@@ -1591,7 +1594,7 @@ impl EconCalcApp {
             let mut ds = DataTable::from_csv_str(
                 dataset_name.to_string(),
                 "x,y\n",
-                Color32::from_rgb(56, 189, 248),
+                Color32::from_rgb(72, 118, 168),
             );
             ds.points = pts;
             ds.sync_raw_csv_from_points();
@@ -1625,7 +1628,7 @@ impl EconCalcApp {
         self.workspace.datasets.push(DataTable::from_csv_str(
             format!("sim_{}_rows", grid.len()),
             csv_s,
-            Color32::from_rgb(52, 211, 153),
+            Color32::from_rgb(76, 142, 104),
         ));
         self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
         self.right_tab = RightDockTab::Datasets;
@@ -2176,7 +2179,7 @@ impl EconCalcApp {
             raw_csv,
             show_on_plot: true,
             show_ols_line: false,
-            color: Color32::from_rgb(16, 185, 129),
+            color: Color32::from_rgb(76, 142, 104),
         };
         ds.sync_from_raw_csv();
         self.workspace.datasets.push(ds);
@@ -2895,16 +2898,16 @@ print(p_main)
 
     pub fn intro_help_text() -> &'static str {
         "\
-=== INTRO-HELP: EconCalc Studio Quickstart Guide ===
+=== INTRO-HELP: Oikonomos (Οἰκονόμος) Quickstart Guide ===
 1. LAYOUT & PANELS:
-   - Top Bar: Toggle Left Sidebar, Right Dock, Bottom Console, Maximize Graph, or Dark/Light Theme.
+   - Top Bar: Toggle Left Sidebar, Right Dock, Bottom Console, Maximize Graph, or Vigília (Dark) / Pergaminho (Light) Theme.
    - Left Sidebar:
-     • Formulas & Sliders: Add/edit functions f(x), customize line style/color/role, and set Desmos slider min/max/step limits.
+     • Formulas & Sliders: Add/edit functions f(x), customize line style/color/role, and set slider min/max/step limits.
      • R Objects: Inspect scalars & vectors created in the Console/Script.
      • Models Library: Load ready-made economic & mathematical templates.
      • Project & Files: Browse project directory, open .R/.qmd/.Rmd/.md/.csv files.
 2. GRAPH VIEWPORT (2D & 3D):
-   - Click `🏠 Home` to restore your configured Home X & Y bounds.
+   - Click `⌂ Home` to restore your configured Home X & Y bounds.
    - Single-Axis Zoom: Select `X-Axis Only` or `Y-Axis Only` in the graph toolbar (or hold Shift for X-zoom, Ctrl for Y-zoom while scrolling).
    - 3D Surface: Switch to `3D Surface` to orbit and inspect any Z = f(x, y) function.
 3. DATASETS & LITERATE NOTES (Right Dock):
@@ -3166,7 +3169,7 @@ print(p_main)
         ui.separator();
         ui.horizontal(|ui| {
             if ui
-                .add(pill_button("📌 Freeze Baseline", self.frozen_baseline.is_some(), pal))
+                .add(pill_button("† Freeze Baseline", self.frozen_baseline.is_some(), pal))
                 .clicked()
             {
                 self.freeze_current_baseline();
@@ -3197,24 +3200,29 @@ print(p_main)
         egui::menu::bar(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 6.0_f32;
             ui.label(
-                RichText::new("☰")
+                RichText::new("◈")
                     .font(FontId::proportional(14.0_f32))
-                    .color(pal.text_secondary),
+                    .color(pal.accent_amber),
             );
             ui.label(
-                RichText::new("EconCalc")
-                    .font(FontId::proportional(13.5_f32))
+                RichText::new("OIKONOMOS")
+                    .font(FontId::proportional(13.2_f32))
                     .strong()
                     .color(pal.text_primary),
+            );
+            ui.label(
+                RichText::new("Οἰκονόμος")
+                    .font(FontId::proportional(11.8_f32))
+                    .color(pal.text_muted),
             );
             ui.add_space(4.0_f32);
 
             ui.menu_button(RichText::new("File ⌄").color(pal.text_secondary), |ui| {
-                if ui.button("📄 New / Clear Workspace").clicked() {
+                if ui.button("§ New / Clear Workspace").clicked() {
                     self.clear_entire_workspace();
                     ui.close_menu();
                 }
-                if ui.button("📂 Open File from Project").clicked() {
+                if ui.button("⊞ Open File from Project").clicked() {
                     self.maximize_graph = false;
                     self.show_left_panel = true;
                     self.left_bottom_collapsed = false;
@@ -3223,18 +3231,18 @@ print(p_main)
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("💾 Save R Script (exports/workspace_script.R)").clicked() {
+                if ui.button("‡ Save R Script (exports/workspace_script.R)").clicked() {
                     self.save_editor_script_default();
                     ui.close_menu();
                 }
-                if ui.button("📝 Save Notes (.qmd / .Rmd / .md)").clicked() {
+                if ui.button("¶ Save Notes (.qmd / .Rmd / .md)").clicked() {
                     self.save_notes_default();
                     ui.close_menu();
                 }
                 ui.separator();
                 if ui
                     .button(
-                        RichText::new("🚀 Export Bundle & Launch Positron").color(pal.accent_green),
+                        RichText::new("⊳ Export Bundle & Open Positron").color(pal.accent_green),
                     )
                     .clicked()
                 {
@@ -3244,19 +3252,19 @@ print(p_main)
             });
 
             ui.menu_button(RichText::new("Edit ⌄").color(pal.text_secondary), |ui| {
-                if ui.button("📋 Copy Canonical LaTeX / TikZ").clicked() {
+                if ui.button("⎘ Copy Canonical LaTeX / TikZ").clicked() {
                     let latex = self.generate_latex_derivation();
                     ui.ctx().copy_text(latex);
                     self.status_banner = "Copied canonical LaTeX/TikZ to clipboard.".to_string();
                     ui.close_menu();
                 }
-                if ui.button("📋 Copy R / ggplot2 Script").clicked() {
+                if ui.button("⎘ Copy R / ggplot2 Script").clicked() {
                     let r_src = self.generate_r_script_preview();
                     ui.ctx().copy_text(r_src);
                     self.status_banner = "Copied R/ggplot2 script to clipboard.".to_string();
                     ui.close_menu();
                 }
-                if ui.button("🧹 Clear Console Logs").clicked() {
+                if ui.button("⌫ Clear Console Logs").clicked() {
                     self.console_logs.clear();
                     self.status_banner = "Console cleared.".to_string();
                     ui.close_menu();
@@ -3277,33 +3285,33 @@ print(p_main)
                 {
                     self.maximize_graph = false;
                 }
-                ui.checkbox(&mut self.maximize_graph, "⛶ Maximize Graph Viewport");
+                ui.checkbox(&mut self.maximize_graph, "⊞ Maximize Graph Viewport");
                 ui.separator();
                 if ui
-                    .selectable_label(self.viewport_mode == ViewportMode::Plot2D, "📈 2D Graph")
+                    .selectable_label(self.viewport_mode == ViewportMode::Plot2D, "◿ 2D Graph")
                     .clicked()
                 {
                     self.viewport_mode = ViewportMode::Plot2D;
                     ui.close_menu();
                 }
                 if ui
-                    .selectable_label(self.viewport_mode == ViewportMode::Surface3D, "🧊 3D Surface")
+                    .selectable_label(self.viewport_mode == ViewportMode::Surface3D, "◈ 3D Surface")
                     .clicked()
                 {
                     self.viewport_mode = ViewportMode::Surface3D;
                     ui.close_menu();
                 }
                 ui.separator();
-                ui.checkbox(&mut self.floating_datasets_window, "🗗 Pop-Out Datasets");
-                ui.checkbox(&mut self.floating_notes_window, "🗗 Pop-Out Notes");
-                ui.checkbox(&mut self.floating_help_window, "🗗 Pop-Out Help");
-                ui.checkbox(&mut self.floating_env_window, "🗗 Pop-Out Environment");
-                ui.checkbox(&mut self.floating_console_window, "🗗 Pop-Out Console");
+                ui.checkbox(&mut self.floating_datasets_window, "▢ Pop-Out Datasets");
+                ui.checkbox(&mut self.floating_notes_window, "▢ Pop-Out Notes");
+                ui.checkbox(&mut self.floating_help_window, "▢ Pop-Out Help");
+                ui.checkbox(&mut self.floating_env_window, "▢ Pop-Out Environment");
+                ui.checkbox(&mut self.floating_console_window, "▢ Pop-Out Console");
                 ui.separator();
                 let theme_txt = if self.dark_mode {
-                    "☀ Switch to Light Theme"
+                    "☼ Switch to Pergaminho (Light)"
                 } else {
-                    "🌙 Switch to Dark Slate Theme"
+                    "☾ Switch to Vigília (Dark)"
                 };
                 if ui.button(theme_txt).clicked() {
                     self.dark_mode = !self.dark_mode;
@@ -3320,7 +3328,7 @@ print(p_main)
                     self.evaluate_editor_script();
                     ui.close_menu();
                 }
-                if ui.button("📊 Generate Dataset from f(x)").clicked() {
+                if ui.button("⊞ Generate Dataset from f(x)").clicked() {
                     self.generate_dataset_from_primary_fn();
                     ui.close_menu();
                 }
@@ -3353,7 +3361,7 @@ print(p_main)
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 4.0_f32;
                 if ui
-                    .add(pill_button("📁", false, pal))
+                    .add(pill_button("▣", false, pal))
                     .on_hover_text("Focus Project Files Explorer")
                     .clicked()
                 {
@@ -3377,10 +3385,10 @@ print(p_main)
                     self.show_bottom_panel = true;
                     self.bottom_tab = BottomDockTab::NumericAndGraphSettings;
                 }
-                let theme_icon = if self.dark_mode { "🌙" } else { "☀" };
+                let theme_icon = if self.dark_mode { "☾" } else { "☼" };
                 if ui
                     .add(pill_button(theme_icon, false, pal))
-                    .on_hover_text("Toggle Dark Slate / Light Bento Theme")
+                    .on_hover_text("Toggle Vigília (Dark) / Pergaminho (Light) Theme")
                     .clicked()
                 {
                     self.dark_mode = !self.dark_mode;
@@ -3441,14 +3449,14 @@ print(p_main)
             ui.spacing_mut().item_spacing.x = 5.0_f32;
 
             if ui
-                .add(pill_button("📄", false, pal))
+                .add(pill_button("§", false, pal))
                 .on_hover_text("New / Clear Workspace")
                 .clicked()
             {
                 self.clear_entire_workspace();
             }
             if ui
-                .add(pill_button("📂", false, pal))
+                .add(pill_button("▣", false, pal))
                 .on_hover_text("Refresh & Open Project Files")
                 .clicked()
             {
@@ -3459,8 +3467,8 @@ print(p_main)
                 self.refresh_project_files();
             }
             if ui
-                .add(pill_button("💾", false, pal))
-                .on_hover_text("Export Bundle & Launch Positron")
+                .add(pill_button("‡", false, pal))
+                .on_hover_text("Export Bundle & Open Positron")
                 .clicked()
             {
                 self.trigger_export_pipeline();
@@ -3469,7 +3477,7 @@ print(p_main)
             ui.separator();
 
             if ui
-                .add(pill_button("🏠", false, pal))
+                .add(pill_button("⌂", false, pal))
                 .on_hover_text("Reset Graph to Home View")
                 .clicked()
             {
@@ -3488,7 +3496,7 @@ print(p_main)
                 self.evaluate_editor_script();
             }
             if ui
-                .add(pill_button("✂", false, pal))
+                .add(pill_button("⌫", false, pal))
                 .on_hover_text("Clear Console Logs")
                 .clicked()
             {
@@ -3530,7 +3538,7 @@ print(p_main)
                     if ui
                         .selectable_label(
                             self.viewport_mode == ViewportMode::Plot2D,
-                            "📈 2D Symbolic Graph",
+                            "◿ 2D Symbolic Graph",
                         )
                         .clicked()
                     {
@@ -3540,7 +3548,7 @@ print(p_main)
                     if ui
                         .selectable_label(
                             self.viewport_mode == ViewportMode::Surface3D,
-                            "🧊 3D Surface Z = f(x, y)",
+                            "◈ 3D Surface Z = f(x, y)",
                         )
                         .clicked()
                     {
@@ -3548,13 +3556,13 @@ print(p_main)
                         ui.close_menu();
                     }
                     ui.separator();
-                    if ui.button("📝 R Script Editor").clicked() {
+                    if ui.button("¶ R Script Editor").clicked() {
                         self.maximize_graph = false;
                         self.show_bottom_panel = true;
                         self.bottom_tab = BottomDockTab::ScriptEditor;
                         ui.close_menu();
                     }
-                    if ui.button("📓 Quarto (.qmd) Notes").clicked() {
+                    if ui.button("§ Quarto (.qmd) Notes").clicked() {
                         self.maximize_graph = false;
                         self.show_right_panel = true;
                         self.right_bottom_collapsed = false;
@@ -3670,15 +3678,15 @@ print(p_main)
                                 add_kind = Some(0);
                                 ui.close_menu();
                             }
-                            if ui.button("🎚  Parameter Slider").clicked() {
+                            if ui.button("÷  Parameter Slider").clicked() {
                                 add_kind = Some(1);
                                 ui.close_menu();
                             }
-                            if ui.button("📁  Collapsible Folder").clicked() {
+                            if ui.button("▣  Collapsible Folder").clicked() {
                                 add_kind = Some(2);
                                 ui.close_menu();
                             }
-                            if ui.button("💬  Text / Economic Note").clicked() {
+                            if ui.button("¶  Text / Economic Note").clicked() {
                                 add_kind = Some(3);
                                 ui.close_menu();
                             }
@@ -3859,12 +3867,12 @@ print(p_main)
             return;
         }
 
-        // ---- Optional List Edit Mode Action Bar (`📌 Freeze Baseline`, `Clear All`, `Done`) ----
+        // ---- Optional List Edit Mode Action Bar (`† Freeze Baseline`, `Clear All`, `Done`) ----
         if self.symbolic_list_edit_mode {
             render_card_sub_toolbar(ui, pal, |ui| {
                 if ui
                     .add(pill_button(
-                        "📌 Freeze Baseline",
+                        "† Freeze Baseline",
                         self.frozen_baseline.is_some(),
                         pal,
                     ))
@@ -4817,7 +4825,7 @@ print(p_main)
                                                     if x0.is_finite()
                                                         && ui
                                                             .add(pill_button(
-                                                                "📍 Plot Point",
+                                                                "◈ Plot Point",
                                                                 plot_eval_point,
                                                                 pal,
                                                             ))
@@ -4895,7 +4903,7 @@ print(p_main)
                                             );
                                         });
                                     if ui
-                                        .add(pill_button("📍 Roots", highlight_roots, pal))
+                                        .add(pill_button("◈ Roots", highlight_roots, pal))
                                         .on_hover_text("Highlight roots / intersections on graph")
                                         .clicked()
                                     {
@@ -5058,7 +5066,7 @@ print(p_main)
                                         .color(pal.accent_blue),
                                 );
                                 if ui
-                                    .add(header_icon_button("📋 Copy", pal.text_primary))
+                                    .add(header_icon_button("⎘ Copy", pal.text_primary))
                                     .on_hover_text("Copy canonical LaTeX to clipboard")
                                     .clicked()
                                 {
@@ -5068,14 +5076,14 @@ print(p_main)
                                 let tex_edit_id =
                                     ui.make_persistent_id(format!("tex_drawer_edit_{}", cell_id));
                                 if ui
-                                    .add(header_icon_button("📥 Paste", pal.text_secondary))
+                                    .add(header_icon_button("⎗ Paste", pal.text_secondary))
                                     .on_hover_text("Focus LaTeX box to paste (Ctrl+V)")
                                     .clicked()
                                 {
                                     ui.memory_mut(|m| m.request_focus(tex_edit_id));
                                 }
                                 if ui
-                                    .add(header_icon_button("✨ Format", pal.accent_green))
+                                    .add(header_icon_button("≡ Format", pal.accent_green))
                                     .on_hover_text("Canonicalize LaTeX from AST")
                                     .clicked()
                                 {
@@ -5083,7 +5091,7 @@ print(p_main)
                                     latex_error = None;
                                 }
                                 if ui
-                                    .add(header_icon_button("📊 TikZ", pal.accent_purple))
+                                    .add(header_icon_button("◿ TikZ", pal.accent_purple))
                                     .on_hover_text("Copy TikZ/pgfplots \\addplot snippet")
                                     .clicked()
                                 {
@@ -5563,7 +5571,7 @@ print(p_main)
 
             if ui
                 .add(header_icon_button(
-                    if *visible { "📁" } else { "📂" },
+                    if *visible { "▣" } else { "▢" },
                     if *visible {
                         pal.accent_blue
                     } else {
@@ -5841,7 +5849,7 @@ print(p_main)
                         if ui
                             .add(
                                 egui::Button::new(
-                                    RichText::new("🚀 Export Bundle & Open Positron")
+                                    RichText::new("⊳ Export Bundle & Open Positron")
                                         .strong()
                                         .color(pal.accent_green),
                                 )
@@ -5983,7 +5991,7 @@ print(p_main)
                                             }
                                             if matches!(&obj, RObject::Numeric(v) if v.len() >= 2)
                                                 && ui
-                                                    .add(header_icon_button("📈", pal.accent_green))
+                                                    .add(header_icon_button("◿", pal.accent_green))
                                                     .on_hover_text("Plot vector on 2D Graph")
                                                     .clicked()
                                             {
@@ -5991,7 +5999,7 @@ print(p_main)
                                             }
                                             if obj.is_lm_model() {
                                                 if ui
-                                                    .add(header_icon_button("📈", pal.accent_green))
+                                                    .add(header_icon_button("◿", pal.accent_green))
                                                     .on_hover_text("Plot fitted values")
                                                     .clicked()
                                                 {
@@ -6029,7 +6037,7 @@ print(p_main)
                                             if col_names.len() >= 2
                                                 && ui
                                                     .small_button(format!(
-                                                        "📈 Plot {}${} vs {}${}",
+                                                        "◿ Plot {}${} vs {}${}",
                                                         k, col_names[0], k, col_names[1]
                                                     ))
                                                     .clicked()
@@ -6050,7 +6058,7 @@ print(p_main)
                                                         RichText::new(col_val.type_summary())
                                                             .color(pal.text_muted),
                                                     );
-                                                    if ui.small_button("📈").clicked() {
+                                                    if ui.small_button("◿").clicked() {
                                                         run_console_cmd = Some(format!(
                                                             "plot({}${})",
                                                             k, col_name
@@ -6240,7 +6248,7 @@ print(p_main)
                 });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add(header_icon_button("🔄", pal.text_secondary))
+                    .add(header_icon_button("↺", pal.text_secondary))
                     .on_hover_text("Refresh directory listing")
                     .clicked()
                 {
@@ -6269,7 +6277,7 @@ print(p_main)
                                 continue;
                             }
                             ui.horizontal(|ui| {
-                                let icon = if entry.is_dir { "📁" } else { "📄" };
+                                let icon = if entry.is_dir { "▣" } else { "§" };
                                 if ui
                                     .selectable_label(
                                         false,
@@ -6327,7 +6335,7 @@ print(p_main)
         match ext.as_str() {
             "csv" | "tsv" => {
                 let mut ds =
-                    DataTable::from_csv_str(file_stem, content, Color32::from_rgb(14, 165, 233));
+                    DataTable::from_csv_str(file_stem, content, Color32::from_rgb(72, 118, 168));
                 ds.show_on_plot = true;
                 self.workspace.datasets.push(ds);
                 self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
@@ -6379,8 +6387,8 @@ print(p_main)
 
                         // Left: Mode selector pill + `+` quick action
                         let mode_pill = match self.viewport_mode {
-                            ViewportMode::Plot2D => "📈 2D Graph ⌄",
-                            ViewportMode::Surface3D => "🧊 3D Surface ⌄",
+                            ViewportMode::Plot2D => "◿ 2D Graph ⌄",
+                            ViewportMode::Surface3D => "◈ 3D Surface ⌄",
                         };
                         ui.menu_button(
                             RichText::new(mode_pill)
@@ -6391,7 +6399,7 @@ print(p_main)
                                 if ui
                                     .selectable_label(
                                         self.viewport_mode == ViewportMode::Plot2D,
-                                        "📈 2D Symbolic Graph",
+                                        "◿ 2D Symbolic Graph",
                                     )
                                     .clicked()
                                 {
@@ -6401,7 +6409,7 @@ print(p_main)
                                 if ui
                                     .selectable_label(
                                         self.viewport_mode == ViewportMode::Surface3D,
-                                        "🧊 3D Isometric Surface",
+                                        "◈ 3D Isometric Surface",
                                     )
                                     .clicked()
                                 {
@@ -6424,7 +6432,7 @@ print(p_main)
                         }
 
                         if ui
-                            .add(pill_button("🏠", false, pal))
+                            .add(pill_button("⌂", false, pal))
                             .on_hover_text(format!(
                                 "Restore Home View: X[{:.1}, {:.1}], Y[{:.1}, {:.1}]",
                                 self.home_x_min, self.home_x_max, self.home_y_min, self.home_y_max
@@ -6532,11 +6540,11 @@ print(p_main)
                             }
                         }
 
-                        // Right: `📌` Freeze Baseline + `⋮` quick overlays popover + `⛶` Maximize Graph
+                        // Right: `†` Freeze Baseline + `⋮` quick overlays popover + `⊞` Maximize Graph
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.spacing_mut().item_spacing.x = 4.0_f32;
                             if ui
-                                .add(pill_button("⛶", self.maximize_graph, pal))
+                                .add(pill_button("⊞", self.maximize_graph, pal))
                                 .on_hover_text("Maximize / Restore Graph Viewport")
                                 .clicked()
                             {
@@ -6555,7 +6563,7 @@ print(p_main)
                             .on_hover_text("Graph Axes, Grid Steps & Overlays");
                             if self.viewport_mode == ViewportMode::Plot2D
                                 && ui
-                                    .add(pill_button("📌", self.frozen_baseline.is_some(), pal))
+                                    .add(pill_button("†", self.frozen_baseline.is_some(), pal))
                                     .on_hover_text(if self.frozen_baseline.is_some() {
                                         "Click to clear frozen comparative-statics baseline"
                                     } else {
@@ -8086,7 +8094,7 @@ print(p_main)
                 }
             }
             if ui
-                .add(pill_button("🧹 Clear", false, pal))
+                .add(pill_button("⌫ Clear", false, pal))
                 .on_hover_text("Clear console output")
                 .clicked()
             {
@@ -8094,7 +8102,7 @@ print(p_main)
                 self.status_banner = "Console cleared.".to_string();
             }
             if ui
-                .add(pill_button("📋 Copy", false, pal))
+                .add(pill_button("⎘ Copy", false, pal))
                 .on_hover_text("Copy console transcript to clipboard")
                 .clicked()
             {
@@ -8108,7 +8116,7 @@ print(p_main)
                 self.status_banner = "Copied console output to clipboard.".to_string();
             }
             if ui
-                .add(pill_button("📂 Load .R", false, pal))
+                .add(pill_button("▣ Load .R", false, pal))
                 .on_hover_text("Load exports/workspace_script.R into Script Editor")
                 .clicked()
             {
@@ -8130,14 +8138,14 @@ print(p_main)
                 }
             }
             if ui
-                .add(pill_button("💾 Save .R", false, pal))
+                .add(pill_button("‡ Save .R", false, pal))
                 .on_hover_text("Save Script Editor to exports/workspace_script.R")
                 .clicked()
             {
                 self.save_editor_script_default();
             }
             if ui
-                .add(pill_button("❓ Help", false, pal))
+                .add(pill_button("? Help", false, pal))
                 .on_hover_text("Open interactive help (`general-help`)")
                 .clicked()
             {
@@ -8586,14 +8594,14 @@ print(p_main)
         render_card_sub_toolbar(ui, pal, |ui| {
             if let Some(ds) = self.workspace.datasets.get_mut(self.workspace.active_dataset_idx) {
                 if ui
-                    .add(pill_button("📈", ds.show_on_plot, pal))
+                    .add(pill_button("◿", ds.show_on_plot, pal))
                     .on_hover_text("Toggle Scatter Plot Overlay on 2D Graph")
                     .clicked()
                 {
                     ds.show_on_plot = !ds.show_on_plot;
                 }
                 if ui
-                    .add(pill_button("📉", ds.show_ols_line, pal))
+                    .add(pill_button("⟋", ds.show_ols_line, pal))
                     .on_hover_text("Toggle OLS Regression Line Overlay")
                     .clicked()
                 {
@@ -8635,7 +8643,7 @@ print(p_main)
                 add_row = true;
             }
             if ui
-                .add(pill_button("💾 CSV", false, pal))
+                .add(pill_button("‡ CSV", false, pal))
                 .on_hover_text("Export active dataset to exports/<name>.csv")
                 .clicked()
             {
@@ -8652,7 +8660,7 @@ print(p_main)
             self.workspace.datasets.push(DataTable::from_csv_str(
                 name,
                 "x,y\n1.0,2.0\n2.0,4.0\n3.0,6.0",
-                Color32::from_rgb(56, 189, 248),
+                Color32::from_rgb(72, 118, 168),
             ));
             self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
         }
@@ -8789,9 +8797,9 @@ print(p_main)
 
     fn render_notes_and_reports_ui(&mut self, ui: &mut Ui, pal: ThemePalette) {
         render_card_sub_toolbar(ui, pal, |ui| {
-            ui.selectable_value(&mut self.notes_preview_mode, false, "✏ Edit");
-            ui.selectable_value(&mut self.notes_preview_mode, true, "👁 Reader");
-            if ui.add(pill_button("📂", false, pal)).on_hover_text("Import file").clicked() {
+            ui.selectable_value(&mut self.notes_preview_mode, false, "¶ Edit");
+            ui.selectable_value(&mut self.notes_preview_mode, true, "§ Reader");
+            if ui.add(pill_button("▣", false, pal)).on_hover_text("Import file").clicked() {
                 let path = PathBuf::from(self.file_io_path_input.trim());
                 match load_text_file(&path) {
                     Ok(txt) => {
@@ -8801,7 +8809,7 @@ print(p_main)
                     Err(e) => self.status_banner = e,
                 }
             }
-            if ui.add(pill_button("💾", false, pal)).on_hover_text("Save notes file").clicked() {
+            if ui.add(pill_button("‡", false, pal)).on_hover_text("Save notes file").clicked() {
                 self.save_notes_default();
             }
             if ui
@@ -8886,7 +8894,7 @@ print(p_main)
                 if ui
                     .add(
                         egui::Button::new(
-                            RichText::new("🚀 Export Bundle & Open Positron")
+                            RichText::new("⊳ Export Bundle & Open Positron")
                                 .strong()
                                 .color(pal.accent_green),
                         )
@@ -8906,11 +8914,11 @@ print(p_main)
         let mut r_str = self.generate_r_script_preview();
 
         render_card_sub_toolbar(ui, pal, |ui| {
-            if ui.add(pill_button("📋 Copy LaTeX / TikZ", false, pal)).clicked() {
+            if ui.add(pill_button("⎘ Copy LaTeX / TikZ", false, pal)).clicked() {
                 ui.ctx().copy_text(latex_str.clone());
                 self.status_banner = "Copied LaTeX derivation to clipboard.".to_string();
             }
-            if ui.add(pill_button("📋 Copy R Script", false, pal)).clicked() {
+            if ui.add(pill_button("⎘ Copy R Script", false, pal)).clicked() {
                 ui.ctx().copy_text(r_str.clone());
                 self.status_banner = "Copied R script to clipboard.".to_string();
             }
@@ -8986,7 +8994,7 @@ print(p_main)
 
         if self.floating_datasets_window {
             let mut open = self.floating_datasets_window;
-            egui::Window::new("📊 Data Viewer & Datasets Manager")
+            egui::Window::new("⊞ Data Viewer & Datasets Manager")
                 .open(&mut open)
                 .default_size([500.0_f32, 430.0_f32])
                 .resizable(true)
@@ -8998,7 +9006,7 @@ print(p_main)
 
         if self.floating_notes_window {
             let mut open = self.floating_notes_window;
-            egui::Window::new("📓 Notes & Literate Reports (.qmd / .Rmd / .md)")
+            egui::Window::new("§ Notes & Literate Reports (.qmd / .Rmd / .md)")
                 .open(&mut open)
                 .default_size([520.0_f32, 460.0_f32])
                 .resizable(true)
@@ -9010,7 +9018,7 @@ print(p_main)
 
         if self.floating_help_window {
             let mut open = self.floating_help_window;
-            egui::Window::new("❓ EconCalc Studio Help (`intro-help` & `general-help`)")
+            egui::Window::new("? Oikonomos (Οἰκονόμος) Help (`intro-help` & `general-help`)")
                 .open(&mut open)
                 .default_size([560.0_f32, 460.0_f32])
                 .resizable(true)
@@ -9022,7 +9030,7 @@ print(p_main)
 
         if self.floating_env_window {
             let mut open = self.floating_env_window;
-            egui::Window::new("📦 R Environment Inspector")
+            egui::Window::new("◈ R Environment Inspector")
                 .open(&mut open)
                 .default_size([360.0_f32, 420.0_f32])
                 .resizable(true)
@@ -9034,7 +9042,7 @@ print(p_main)
 
         if self.floating_console_window {
             let mut open = self.floating_console_window;
-            egui::Window::new("⚡ Console / Script / Settings")
+            egui::Window::new("⊳ Console / Script / Settings")
                 .open(&mut open)
                 .default_size([560.0_f32, 340.0_f32])
                 .resizable(true)

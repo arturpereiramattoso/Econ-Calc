@@ -263,7 +263,7 @@ pub fn write_simulation_csv(path: &Path, rows: &[GridRow]) -> Result<(), String>
 fn write_r_analysis_script(path: &Path, payload: &ExportPayload) -> Result<(), String> {
     let script = format!(
         r##"# ==============================================================================
-# EconCalc Studio — Reproducible Analysis Script for Positron / RStudio
+# Oikonomos (Οἰκονόμος) — Reproducible Analysis Script for Positron / RStudio
 # Active Model: {model_title}
 # ==============================================================================
 
@@ -301,9 +301,9 @@ p_main <- ggplot(sim_data, aes(x = x)) +
   scale_color_manual(
     name = "Series",
     values = c(
-      "Primary Curve" = "#2563eb",
-      "Secondary / Constraint" = "#dc2626",
-      "Solved Equilibrium (x*, y*)" = "#16a34a"
+      "Primary Curve" = "#4876a8",
+      "Secondary / Constraint" = "#b84a39",
+      "Solved Equilibrium (x*, y*)" = "#4c8e68"
     )
   ) +
   labs(

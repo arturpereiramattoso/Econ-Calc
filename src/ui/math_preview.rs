@@ -537,7 +537,7 @@ pub fn build_preview_layout(
             "...",
             base_size,
             true,
-            Color32::from_rgb(148, 163, 184),
+            Color32::from_rgb(138, 126, 110),
         ));
         return PreviewBuild {
             layout: MathBox::row(parts),
@@ -1243,7 +1243,7 @@ pub fn paint_math_box(
                 Pos2::new(origin_x + 0.8_f32, baseline_y - mbox.ascent + 1.0_f32),
                 Pos2::new(origin_x + mbox.width - 0.8_f32, baseline_y + mbox.descent - 0.5_f32),
             );
-            let accent = Color32::from_rgb(96, 165, 250);
+            let accent = Color32::from_rgb(186, 146, 74);
             painter.rect_filled(slot_rect, Rounding::same(3.0_f32), accent.gamma_multiply(0.14_f32));
             // Subtle dashed border segments around the active visual placeholder slot
             let dash_stroke = Stroke::new(1.15_f32, accent.gamma_multiply(0.75_f32));

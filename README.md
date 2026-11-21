@@ -1,16 +1,18 @@
-# Econ-Calc
+# Oikonomos
 
 > **Status: Early Development / Pre-Alpha** — Started as an offline calculator for Economics undergraduates in Rust, now evolving into a unified offline math, data-science, and IDE workspace. **Contributors and testers are warmly welcome.**
 
-**Econ-Calc** is a **100% offline, native, cross-platform desktop workspace** written in Rust that brings together three workflows in one lightweight application:
+**Oikonomos** is a **100% offline, native, cross-platform desktop workspace** written in Rust that brings together three workflows in one lightweight application:
 
 1. **Interactive Math & Graphing (Desmos-inspired):** Real-time 2D/3D function plotting, reactive parameter sliders (ideal for comparative statics, supply/demand shifts, and calculus), and live expression evaluation.
 2. **Data-Science Workbench (RStudio-inspired):** Interactive REPL console, environment/variable inspector, virtualized table/dataframe viewer, and integrated plot pane.
 3. **Modern Polyglot IDE (Positron / VS Code-inspired):** Modular multi-pane workspace, keyboard-first navigation, command palette, syntax-highlighted editor, and optional LSP/DAP code intelligence.
 
+> *About the name:* the project was previously called **Econ-Calc** (the repository and crate still use that name). *Oikonomos* is the Greek root of "economics".
+
 ---
 
-## Why Econ-Calc Exists
+## Why Oikonomos Exists
 
 Students, researchers, and engineers—especially in economics, statistics, and applied sciences—often have to juggle tools that force painful trade-offs:
 
@@ -18,7 +20,7 @@ Students, researchers, and engineers—especially in economics, statistics, and 
 * **Lightweight math tools** (Desmos, GeoGebra, engineering scratchpads) provide instant visual intuition, but are browser-bound or disconnected from real datasets and programming workflows.
 * **Classic native IDEs** (RStudio, Spyder) are tightly coupled to a single primary language ecosystem.
 
-**Econ-Calc** exists to bridge that gap: *a single native Rust codebase that boots instantaneously on a 2–4 GB RAM laptop with zero mandatory dependencies, while scaling cleanly into a full workstation IDE on capable hardware.*
+**Oikonomos** exists to bridge that gap: *a single native Rust codebase that boots instantaneously on a 2–4 GB RAM laptop with zero mandatory dependencies, while scaling cleanly into a full workstation IDE on capable hardware.*
 
 ---
 
@@ -45,7 +47,7 @@ Unlocked via **Cargo feature flags** and **lazily spawned out-of-process workers
 
 ## Non-Negotiable Engineering Principles
 
-To keep Econ-Calc fast, portable, and maintainable as it grows, we hold ourselves to these rules:
+To keep Oikonomos fast, portable, and maintainable as it grows, we hold ourselves to these rules:
 
 1. **UI Never Couples to Heavy Backends:** All data engines, plotters, kernels, and language servers sit behind clean traits or IPC protocols.
 2. **UI Thread Never Blocks:** Math sampling, AST evaluation, file indexing, and script execution run on background workers communicating via bounded channels.
@@ -143,7 +145,7 @@ cargo clippy --all-targets
 
 ## Looking for Help & Contributors!
 
-Building a project at the intersection of graphing calculators, data science, and IDEs is ambitious—**no single person has every skill needed to do it well**. Whether you want to write core Rust, optimize math algorithms, design clean UI ergonomics, or test builds on an old laptop, your help can directly shape Econ-Calc.
+Building a project at the intersection of graphing calculators, data science, and IDEs is ambitious—**no single person has every skill needed to do it well**. Whether you want to write core Rust, optimize math algorithms, design clean UI ergonomics, or test builds on an old laptop, your help can directly shape Oikonomos.
 
 ### Areas Where Help Is Needed Most
 

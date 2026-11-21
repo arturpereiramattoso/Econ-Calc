@@ -4,92 +4,94 @@ use eframe::egui::{
 use egui_plot::{HLine, Line, LineStyle, PlotPoints, PlotUi, VLine};
 
 // =============================================================================
-// DARK SLATE IDE / BENTO THEME PALETTE
+// OIKONOMOS (Οἰκονόμος) — MINERAL & MANUSCRIPT PALETTE ("VIGÍLIA" & "PERGAMINHO")
 // =============================================================================
 
 #[derive(Debug, Clone, Copy)]
 pub struct ThemePalette {
-    /// Outer window backdrop behind Bento cards (`#11151E` dark).
+    /// Outer window backdrop behind cards (`#13110F` Vigília dark / `#E4DCCD` Pergaminho light).
     pub outer_bg: Color32,
-    /// Primary Bento card surface (`#1A202C` dark).
+    /// Primary card surface (`#1C1916` walnut dark / `#F5EFE4` parchment light).
     pub card_bg: Color32,
-    /// Bento card header / tab bar strip (`#202736` dark).
+    /// Card header / tab bar strip (`#24201C` dark / `#ECE5D7` light).
     pub card_header_bg: Color32,
-    /// Deep canvas / console / text input well (`#0E121A` dark).
+    /// Deep canvas / console / text input well (`#0F0E0C` atramentum dark / `#FAF6EE` vellum light).
     pub extreme_bg: Color32,
-    /// Plot canvas background (`#0D1119` dark).
+    /// Plot canvas background (`#12100E` dark / `#F8F3E9` light).
     pub plot_bg: Color32,
-    /// Inner capsule cards for functions & sliders (`#232B3D` dark).
+    /// Inner capsule cards for functions & sliders (`#26221D` dark / `#EFE8DB` light).
     pub sub_card_bg: Color32,
-    /// Interactive pills & buttons (`#252D3F` dark).
+    /// Interactive pills & buttons (`#2B2620` dark / `#E6DECE` light).
     pub pill_bg: Color32,
-    /// Hovered pills & buttons (`#313C54` dark).
+    /// Hovered pills & buttons (`#383129` dark / `#D6CCB9` light).
     pub pill_hover: Color32,
-    /// Active selection / focus blue (`#3B82F6` dark).
+    /// Active selection fill (`#4C6C8E` Lapis dark / `#34567E` Lapis light).
     pub pill_active: Color32,
-    /// Subtle 1px card & divider border (`#2B3448` dark).
+    /// Subtle 1px card & divider border (`#3A332B` aged bronze dark / `#C6BCAA` drypoint light).
     pub border: Color32,
-    /// Primary legible text (`#E2E8F0` dark).
+    /// Primary legible text (`#E8E0CE` raw linen dark / `#221D18` iron-gall ink light).
     pub text_primary: Color32,
-    /// Secondary labels & inactive tabs (`#94A3B8` dark).
+    /// Secondary labels & inactive tabs (`#B0A694` limestone dark / `#5C5246` walnut sepia light).
     pub text_secondary: Color32,
-    /// Muted hints & metadata (`#64748B` dark).
+    /// Muted hints & metadata (`#7C7263` umber dark / `#847868` earth gray light).
     pub text_muted: Color32,
-    /// Accent blue for sliders, links, focus (`#60A5FA` dark).
+    /// Primary mineral accent: Byzantine Lapis Lazuli (`#7098C0` dark / `#2E527E` light).
     pub accent_blue: Color32,
-    /// Coral / neon red for primary curve & errors (`#F87171` dark).
+    /// Cinnabar / Manuscript Rubric (`#C45848` Kinnabari dark / `#A8382B` light).
     pub accent_red: Color32,
-    /// Emerald green for execution & equilibrium (`#34D399` dark).
+    /// Malachite / Verdigris (`#5C9E7A` Prasinos dark / `#307250` light).
     pub accent_green: Color32,
-    /// Amber for warnings & calculus probes (`#FBBF24` dark).
+    /// Ochre Gold / Beeswax Candlelight (`#CEA24E` Chrysochra dark / `#A67422` light).
     pub accent_amber: Color32,
-    /// Purple for secondary diagnostics (`#A78BFA` dark).
+    /// Byzantine Porphyry / Tyrian Muted Purple (`#9E7698` Porphyra dark / `#76446A` light).
     pub accent_purple: Color32,
 }
 
 impl ThemePalette {
     pub fn for_mode(dark: bool) -> Self {
         if dark {
+            // "Vigília" — Monastic Charcoal, Walnut, Linen & Mineral Pigments
             Self {
-                outer_bg: Color32::from_rgb(17, 21, 30),         // #11151E
-                card_bg: Color32::from_rgb(26, 32, 44),          // #1A202C
-                card_header_bg: Color32::from_rgb(32, 39, 54),   // #202736
-                extreme_bg: Color32::from_rgb(14, 18, 26),       // #0E121A
-                plot_bg: Color32::from_rgb(13, 17, 25),          // #0D1119
-                sub_card_bg: Color32::from_rgb(35, 43, 61),      // #232B3D
-                pill_bg: Color32::from_rgb(37, 45, 63),          // #252D3F
-                pill_hover: Color32::from_rgb(49, 60, 84),       // #313C54
-                pill_active: Color32::from_rgb(59, 130, 246),    // #3B82F6
-                border: Color32::from_rgb(43, 52, 72),           // #2B3448
-                text_primary: Color32::from_rgb(226, 232, 240),  // #E2E8F0
-                text_secondary: Color32::from_rgb(148, 163, 184), // #94A3B8
-                text_muted: Color32::from_rgb(100, 116, 139),    // #64748B
-                accent_blue: Color32::from_rgb(96, 165, 250),    // #60A5FA
-                accent_red: Color32::from_rgb(248, 113, 113),    // #F87171
-                accent_green: Color32::from_rgb(52, 211, 153),   // #34D399
-                accent_amber: Color32::from_rgb(251, 191, 36),   // #FBBF24
-                accent_purple: Color32::from_rgb(167, 139, 250), // #A78BFA
+                outer_bg: Color32::from_rgb(19, 17, 15),         // #13110F (Atramentum / Charcoal)
+                card_bg: Color32::from_rgb(28, 25, 22),          // #1C1916 (Dark Walnut)
+                card_header_bg: Color32::from_rgb(36, 32, 28),   // #24201C (Cedar Header)
+                extreme_bg: Color32::from_rgb(15, 14, 12),       // #0F0E0C (Deep Inkwell)
+                plot_bg: Color32::from_rgb(18, 16, 14),          // #12100E (Abax Slate)
+                sub_card_bg: Color32::from_rgb(38, 34, 29),      // #26221D (Kellion Cell)
+                pill_bg: Color32::from_rgb(43, 38, 32),          // #2B2620
+                pill_hover: Color32::from_rgb(56, 49, 41),       // #383129
+                pill_active: Color32::from_rgb(76, 108, 142),    // #4C6C8E (Tempered Lapis)
+                border: Color32::from_rgb(58, 51, 43),           // #3A332B (Aged Bronze / Umber)
+                text_primary: Color32::from_rgb(232, 224, 206),  // #E8E0CE (Unbleached Linen)
+                text_secondary: Color32::from_rgb(176, 166, 148), // #B0A694 (Warm Limestone)
+                text_muted: Color32::from_rgb(124, 114, 99),     // #7C7263 (Muted Sepia)
+                accent_blue: Color32::from_rgb(112, 152, 192),   // #7098C0 (Lapis Lazuli)
+                accent_red: Color32::from_rgb(196, 88, 72),      // #C45848 (Cinnabar Rubric)
+                accent_green: Color32::from_rgb(92, 158, 122),   // #5C9E7A (Malachite)
+                accent_amber: Color32::from_rgb(206, 162, 78),   // #CEA24E (Ochre Gold / Sankir)
+                accent_purple: Color32::from_rgb(158, 118, 152), // #9E7698 (Porphyry)
             }
         } else {
+            // "Pergaminho" — Scriptorium Vellum, Iron-Gall Ink & Mineral Rubrics
             Self {
-                outer_bg: Color32::from_rgb(226, 232, 240),      // #E2E8F0
-                card_bg: Color32::from_rgb(255, 255, 255),       // #FFFFFF
-                card_header_bg: Color32::from_rgb(241, 245, 249), // #F1F5F9
-                extreme_bg: Color32::from_rgb(248, 250, 252),    // #F8FAFC
-                plot_bg: Color32::from_rgb(255, 255, 255),       // #FFFFFF
-                sub_card_bg: Color32::from_rgb(241, 245, 249),   // #F1F5F9
-                pill_bg: Color32::from_rgb(226, 232, 240),       // #E2E8F0
-                pill_hover: Color32::from_rgb(203, 213, 225),    // #CBD5E1
-                pill_active: Color32::from_rgb(37, 99, 235),     // #2563EB
-                border: Color32::from_rgb(203, 213, 225),        // #CBD5E1
-                text_primary: Color32::from_rgb(15, 23, 42),     // #0F172A
-                text_secondary: Color32::from_rgb(71, 85, 105),  // #475569
-                text_muted: Color32::from_rgb(100, 116, 139),    // #64748B
-                accent_blue: Color32::from_rgb(37, 99, 235),     // #2563EB
-                accent_red: Color32::from_rgb(220, 38, 38),      // #DC2626
-                accent_green: Color32::from_rgb(5, 150, 105),    // #059669
-                accent_amber: Color32::from_rgb(217, 119, 6),    // #D97706
-                accent_purple: Color32::from_rgb(124, 58, 237),  // #7C3AED
+                outer_bg: Color32::from_rgb(228, 220, 205),      // #E4DCCD (Binding Linen)
+                card_bg: Color32::from_rgb(245, 239, 228),       // #F5EFE4 (Cotton Parchment)
+                card_header_bg: Color32::from_rgb(236, 229, 215), // #ECE5D7 (Folio Margin)
+                extreme_bg: Color32::from_rgb(250, 246, 238),    // #FAF6EE (Clean Vellum)
+                plot_bg: Color32::from_rgb(248, 243, 233),       // #F8F3E9 (Geometric Folio)
+                sub_card_bg: Color32::from_rgb(239, 232, 219),   // #EFE8DB
+                pill_bg: Color32::from_rgb(230, 222, 206),       // #E6DECE
+                pill_hover: Color32::from_rgb(214, 204, 185),    // #D6CCB9
+                pill_active: Color32::from_rgb(52, 86, 126),     // #34567E (Byzantine Ultramarine)
+                border: Color32::from_rgb(198, 188, 170),        // #C6BCAA (Rule Line)
+                text_primary: Color32::from_rgb(34, 29, 24),     // #221D18 (Iron-Gall Ink)
+                text_secondary: Color32::from_rgb(92, 82, 70),   // #5C5246 (Walnut Sepia)
+                text_muted: Color32::from_rgb(132, 120, 104),    // #847868 (Warm Earth Gray)
+                accent_blue: Color32::from_rgb(46, 82, 126),     // #2E527E (Lapis Lazuli)
+                accent_red: Color32::from_rgb(168, 56, 43),      // #A8382B (Cinnabar Rubric)
+                accent_green: Color32::from_rgb(48, 114, 80),    // #307250 (Deep Malachite)
+                accent_amber: Color32::from_rgb(166, 116, 34),   // #A67422 (Raw Ochre)
+                accent_purple: Color32::from_rgb(118, 68, 106),  // #76446A (Imperial Porphyry)
             }
         }
     }
@@ -463,24 +465,24 @@ pub fn capsule_frame(pal: ThemePalette, border_color: Color32) -> egui::Frame {
         .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
 }
 
-/// Curated vibrant curve swatch palette tailored for Dark Slate & Light Bento canvases.
+/// Curated mineral & manuscript curve swatch palette (Byzantine & Russian iconographic pigments).
 pub const CURVE_COLOR_SWATCHES: &[Color32] = &[
-    Color32::from_rgb(248, 113, 113), // Coral Red (#F87171)
-    Color32::from_rgb(56, 189, 248),  // Sky Blue (#38BDF8)
-    Color32::from_rgb(52, 211, 153),  // Emerald (#34D399)
-    Color32::from_rgb(167, 139, 250), // Violet (#A78BFA)
-    Color32::from_rgb(251, 191, 36),  // Amber (#FBBF24)
-    Color32::from_rgb(236, 72, 153),  // Rose Pink (#EC4899)
-    Color32::from_rgb(45, 212, 191),  // Teal (#2DD4BF)
-    Color32::from_rgb(251, 146, 60),  // Tangerine (#FB923C)
-    Color32::from_rgb(96, 165, 250),  // Royal Blue (#60A5FA)
-    Color32::from_rgb(163, 230, 53),  // Lime (#A3E635)
-    Color32::from_rgb(226, 232, 240), // Ice Slate (#E2E8F0)
-    Color32::from_rgb(148, 163, 184), // Cool Gray (#94A3B8)
+    Color32::from_rgb(184, 74, 57),   // Cinnabar Rubric / Kinnabari (#B84A39)
+    Color32::from_rgb(72, 118, 168),  // Lapis Lazuli (#4876A8)
+    Color32::from_rgb(76, 142, 104),  // Malachite / Prasinos (#4C8E68)
+    Color32::from_rgb(196, 152, 68),  // Ochre Gold / Chrysochra (#C49844)
+    Color32::from_rgb(142, 92, 130),  // Imperial Porphyry (#8E5C82)
+    Color32::from_rgb(168, 104, 62),  // Burnt Sienna (#A8683E)
+    Color32::from_rgb(68, 132, 136),  // Azurite Verdigris (#448488)
+    Color32::from_rgb(154, 74, 88),   // Madder Carmine / Rubia (#9A4A58)
+    Color32::from_rgb(118, 136, 78),  // Monastic Olive / Elaia (#76884E)
+    Color32::from_rgb(138, 112, 90),  // Raw Umber (#8A705A)
+    Color32::from_rgb(214, 204, 184), // Limestone Chalk / Creta (#D6CCB8)
+    Color32::from_rgb(128, 122, 112), // Silverpoint Lead / Plumbum (#807A70)
 ];
 
-/// Draws a neon-glowing 2D plot curve: soft translucent aura (`3x` stroke width)
-/// underneath the crisp primary curve stroke, modulated by `opacity` (`0.1..=1.0`).
+/// Draws a crisp, classical engraved 2D plot curve without synthetic neon glow,
+/// modulated by `opacity` (`0.1..=1.0`).
 #[allow(clippy::too_many_arguments)]
 pub fn draw_glowing_plot_line_with_opacity(
     plot_ui: &mut PlotUi,
@@ -495,14 +497,6 @@ pub fn draw_glowing_plot_line_with_opacity(
         return;
     }
     let alpha = opacity.clamp(0.1_f32, 1.0_f32);
-    // Outer soft glow pass (unnamed so legend shows only a single entry per curve)
-    plot_ui.line(
-        Line::new(PlotPoints::from(points.clone()))
-            .width(stroke_width * 3.0_f32)
-            .style(line_style)
-            .color(color.gamma_multiply(0.20_f32 * alpha)),
-    );
-    // Crisp core stroke
     plot_ui.line(
         Line::new(PlotPoints::from(points))
             .name(series_label)
@@ -512,7 +506,7 @@ pub fn draw_glowing_plot_line_with_opacity(
     );
 }
 
-/// Draws a neon-glowing 2D plot curve at full opacity (`1.0`).
+/// Draws a crisp 2D plot curve at full opacity (`1.0`).
 #[allow(dead_code)]
 pub fn draw_glowing_plot_line(
     plot_ui: &mut PlotUi,
@@ -533,8 +527,8 @@ pub fn draw_glowing_plot_line(
     );
 }
 
-/// Highlights the principal Cartesian axes `x = 0` and `y = 0`, optionally illuminating
-/// X and/or Y with a cyan/blue glow during `Shift` axis-zoom hover & drag.
+/// Draws the principal Cartesian axes `x = 0` and `y = 0` with sober manuscript rule lines,
+/// highlighting active X/Y axes in warm ochre during `Shift` axis-zoom hover & drag.
 pub fn draw_principal_axes_highlighted(
     plot_ui: &mut PlotUi,
     pal: ThemePalette,
@@ -542,32 +536,22 @@ pub fn draw_principal_axes_highlighted(
     highlight_y: bool,
 ) {
     let base_color = pal.text_muted.gamma_multiply(0.55_f32);
-    let glow_color = Color32::from_rgb(56, 189, 248);
+    let highlight_color = pal.accent_amber;
 
     if highlight_y {
-        plot_ui.vline(
-            VLine::new(0.0_f64)
-                .width(6.5_f32)
-                .color(glow_color.gamma_multiply(0.24_f32)),
-        );
-        plot_ui.vline(VLine::new(0.0_f64).width(2.2_f32).color(glow_color));
+        plot_ui.vline(VLine::new(0.0_f64).width(2.0_f32).color(highlight_color));
     } else {
-        plot_ui.vline(VLine::new(0.0_f64).width(1.25_f32).color(base_color));
+        plot_ui.vline(VLine::new(0.0_f64).width(1.2_f32).color(base_color));
     }
 
     if highlight_x {
-        plot_ui.hline(
-            HLine::new(0.0_f64)
-                .width(6.5_f32)
-                .color(glow_color.gamma_multiply(0.24_f32)),
-        );
-        plot_ui.hline(HLine::new(0.0_f64).width(2.2_f32).color(glow_color));
+        plot_ui.hline(HLine::new(0.0_f64).width(2.0_f32).color(highlight_color));
     } else {
-        plot_ui.hline(HLine::new(0.0_f64).width(1.25_f32).color(base_color));
+        plot_ui.hline(HLine::new(0.0_f64).width(1.2_f32).color(base_color));
     }
 }
 
-/// Highlights the principal Cartesian axes `x = 0` and `y = 0` for crisp quadrant readability.
+/// Draws the principal Cartesian axes `x = 0` and `y = 0` for crisp quadrant readability.
 #[allow(dead_code)]
 pub fn draw_principal_axes(plot_ui: &mut PlotUi, pal: ThemePalette) {
     draw_principal_axes_highlighted(plot_ui, pal, false, false);
