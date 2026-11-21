@@ -8,10 +8,14 @@ use crate::math::{
 };
 pub use crate::r_engine::RObject;
 use crate::r_engine::{DesmosBridge, EmbeddedREngine, REngineMathBridge};
+use crate::ui::bento::{
+    ThemePalette, apply_bento_theme, capsule_frame, draw_glowing_plot_line, draw_principal_axes,
+    header_icon_button, pill_button, render_bento_card_frame, render_card_sub_toolbar,
+    render_card_tab_header, render_card_title_header,
+};
 use crate::ui::math_preview::{apply_smart_math_shortcuts, render_math_preview_strip};
 use eframe::egui::{
-    self, Color32, FontFamily, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, TextStyle,
-    Ui, Vec2,
+    self, Color32, FontId, Margin, Pos2, RichText, Rounding, Sense, Stroke, Ui, Vec2,
 };
 use egui_extras as _;
 use egui_plot::{
@@ -135,12 +139,12 @@ pub struct FunctionStyle {
 impl FunctionStyle {
     pub fn default_for_index(idx: usize) -> Self {
         let palette = [
-            Color32::from_rgb(14, 165, 233),  // Sky Blue
-            Color32::from_rgb(249, 115, 22),  // Orange
-            Color32::from_rgb(16, 185, 129),  // Emerald
-            Color32::from_rgb(139, 92, 246),  // Violet
-            Color32::from_rgb(236, 72, 153),  // Pink
-            Color32::from_rgb(234, 179, 8),   // Amber
+            Color32::from_rgb(248, 113, 113), // Coral / Neon Red (#F87171)
+            Color32::from_rgb(56, 189, 248),  // Sky Blue (#38BDF8)
+            Color32::from_rgb(16, 185, 129),  // Emerald (#10B981)
+            Color32::from_rgb(167, 139, 250), // Violet (#A78BFA)
+            Color32::from_rgb(251, 191, 36),  // Amber (#FBBF24)
+            Color32::from_rgb(236, 72, 153),  // Pink (#EC4899)
         ];
         Self {
             visible: true,
@@ -150,7 +154,7 @@ impl FunctionStyle {
             } else {
                 CurveLineStyle::Solid
             },
-            stroke_width: 2.4_f32,
+            stroke_width: 2.3_f32,
             role: FunctionPlotRole::StandardCurve,
             custom_domain: None,
             settings_open: false,
@@ -337,60 +341,7 @@ x,y
 }
 
 // =============================================================================
-// HIGH-CONTRAST THEME PALETTE (DARK & LIGHT)
-// =============================================================================
-
-#[derive(Debug, Clone, Copy)]
-struct ThemePalette {
-    card_bg: Color32,
-    extreme_bg: Color32,
-    border: Color32,
-    text_primary: Color32,
-    text_secondary: Color32,
-    text_muted: Color32,
-    accent_blue: Color32,
-    accent_green: Color32,
-    accent_amber: Color32,
-    accent_red: Color32,
-    accent_purple: Color32,
-}
-
-impl ThemePalette {
-    fn for_mode(dark: bool) -> Self {
-        if dark {
-            Self {
-                card_bg: Color32::from_rgb(23, 33, 53),
-                extreme_bg: Color32::from_rgb(9, 14, 26),
-                border: Color32::from_rgb(45, 59, 89),
-                text_primary: Color32::from_rgb(241, 245, 249),
-                text_secondary: Color32::from_rgb(203, 213, 225),
-                text_muted: Color32::from_rgb(148, 163, 184),
-                accent_blue: Color32::from_rgb(56, 189, 248),
-                accent_green: Color32::from_rgb(52, 211, 153),
-                accent_amber: Color32::from_rgb(250, 204, 21),
-                accent_red: Color32::from_rgb(248, 113, 113),
-                accent_purple: Color32::from_rgb(167, 139, 250),
-            }
-        } else {
-            Self {
-                card_bg: Color32::from_rgb(255, 255, 255),
-                extreme_bg: Color32::from_rgb(248, 250, 252),
-                border: Color32::from_rgb(203, 213, 225),
-                text_primary: Color32::from_rgb(15, 23, 42),
-                text_secondary: Color32::from_rgb(51, 65, 85),
-                text_muted: Color32::from_rgb(100, 116, 139),
-                accent_blue: Color32::from_rgb(2, 132, 199),
-                accent_green: Color32::from_rgb(5, 150, 105),
-                accent_amber: Color32::from_rgb(180, 83, 9),
-                accent_red: Color32::from_rgb(220, 38, 38),
-                accent_purple: Color32::from_rgb(109, 40, 217),
-            }
-        }
-    }
-}
-
-// =============================================================================
-// UI NAVIGATION ENUMS
+// UI NAVIGATION ENUMS (ThemePalette lives in src/ui/bento.rs)
 // =============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -409,19 +360,52 @@ enum AxisZoomMode {
 impl AxisZoomMode {
     fn label(self) -> &'static str {
         match self {
-            AxisZoomMode::BothXY => "XY Both",
-            AxisZoomMode::XOnly => "X-Axis Only",
-            AxisZoomMode::YOnly => "Y-Axis Only",
+            AxisZoomMode::BothXY => "XY",
+            AxisZoomMode::XOnly => "X",
+            AxisZoomMode::YOnly => "Y",
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LeftSidebarTab {
-    FormulasAndSliders,
-    RObjects,
-    ModelsLibrary,
-    ProjectFiles,
+enum LeftBottomTab {
+    Files,
+    Models,
+    ReportFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileFilterKind {
+    All,
+    Scripts,
+    Data,
+    Notes,
+}
+
+impl FileFilterKind {
+    fn label(self) -> &'static str {
+        match self {
+            FileFilterKind::All => "All files",
+            FileFilterKind::Scripts => "Scripts (.R)",
+            FileFilterKind::Data => "Data (.csv)",
+            FileFilterKind::Notes => "Notes (.qmd/.md)",
+        }
+    }
+
+    fn matches(self, name: &str, is_dir: bool) -> bool {
+        if is_dir || self == FileFilterKind::All {
+            return true;
+        }
+        let lower = name.to_lowercase();
+        match self {
+            FileFilterKind::All => true,
+            FileFilterKind::Scripts => lower.ends_with(".r") || lower.ends_with(".econ"),
+            FileFilterKind::Data => lower.ends_with(".csv") || lower.ends_with(".tsv"),
+            FileFilterKind::Notes => {
+                lower.ends_with(".qmd") || lower.ends_with(".rmd") || lower.ends_with(".md")
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,8 +418,8 @@ enum BottomDockTab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RightDockTab {
     Datasets,
-    NotesAndReports,
     AnalysisAndLatex,
+    NotesAndReports,
     HelpCenter,
 }
 
@@ -726,16 +710,28 @@ pub struct EconCalcApp {
     show_bottom_panel: bool,
     maximize_graph: bool,
 
-    // Floating windows
+    // Bento card collapse & sub-section states
+    symbolic_card_collapsed: bool,
+    left_bottom_collapsed: bool,
+    env_card_collapsed: bool,
+    right_bottom_collapsed: bool,
+    symbolic_functions_open: bool,
+    symbolic_sliders_open: bool,
+    dataset_show_raw_csv: bool,
+
+    // Floating pop-out windows
     floating_datasets_window: bool,
     floating_notes_window: bool,
     floating_help_window: bool,
+    floating_env_window: bool,
+    floating_console_window: bool,
 
     // Navigation tabs
     active_model: ActiveModelKind,
     viewport_mode: ViewportMode,
     axis_zoom_mode: AxisZoomMode,
-    left_tab: LeftSidebarTab,
+    left_bottom_tab: LeftBottomTab,
+    file_filter: FileFilterKind,
     bottom_tab: BottomDockTab,
     right_tab: RightDockTab,
     selected_snippet: SnippetTemplate,
@@ -802,7 +798,7 @@ pub struct EconCalcApp {
 
 impl EconCalcApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        Self::apply_positron_theme(&cc.egui_ctx, true);
+        apply_bento_theme(&cc.egui_ctx, true);
 
         let workspace = Workspace::new_default();
         let initial_script = SnippetTemplate::CobbDouglas.script_text().to_string();
@@ -816,13 +812,23 @@ impl EconCalcApp {
             show_right_panel: true,
             show_bottom_panel: true,
             maximize_graph: false,
+            symbolic_card_collapsed: false,
+            left_bottom_collapsed: false,
+            env_card_collapsed: false,
+            right_bottom_collapsed: false,
+            symbolic_functions_open: true,
+            symbolic_sliders_open: true,
+            dataset_show_raw_csv: false,
             floating_datasets_window: false,
             floating_notes_window: false,
             floating_help_window: false,
+            floating_env_window: false,
+            floating_console_window: false,
             active_model: ActiveModelKind::CobbDouglas,
             viewport_mode: ViewportMode::Plot2D,
             axis_zoom_mode: AxisZoomMode::BothXY,
-            left_tab: LeftSidebarTab::FormulasAndSliders,
+            left_bottom_tab: LeftBottomTab::Files,
+            file_filter: FileFilterKind::All,
             bottom_tab: BottomDockTab::QuickConsole,
             right_tab: RightDockTab::Datasets,
             selected_snippet: SnippetTemplate::CobbDouglas,
@@ -836,7 +842,7 @@ impl EconCalcApp {
             editor_script: initial_script,
             console_logs: Vec::new(),
             eval_counter: 0,
-            status_banner: "Ready — Type `intro-help` or `general-help` in Console for guides."
+            status_banner: "Ready — Type `intro-help` or `general-help` in Console."
                 .to_string(),
             domain_min: 0.2_f64,
             domain_max: 25.0_f64,
@@ -884,70 +890,78 @@ impl EconCalcApp {
         ThemePalette::for_mode(self.dark_mode)
     }
 
-    fn apply_positron_theme(ctx: &egui::Context, dark: bool) {
-        let mut style = (*ctx.style()).clone();
-        style.spacing.item_spacing = Vec2::new(7.0_f32, 5.0_f32);
-        style.spacing.window_margin = Margin::same(8.0_f32);
-        style.spacing.button_padding = Vec2::new(9.0_f32, 4.5_f32);
+    fn clear_entire_workspace(&mut self) {
+        self.workspace.clear();
+        self.editor_script.clear();
+        self.show_equilibrium_overlay = false;
+        self.enable_equilibrium_solver = false;
+        self.status_banner = "Workspace cleared.".to_string();
+    }
 
-        style.text_styles.insert(
-            TextStyle::Heading,
-            FontId::new(15.5_f32, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Body,
-            FontId::new(13.0_f32, FontFamily::Proportional),
-        );
-        style.text_styles.insert(
-            TextStyle::Monospace,
-            FontId::new(12.5_f32, FontFamily::Monospace),
-        );
-        style.text_styles.insert(
-            TextStyle::Button,
-            FontId::new(12.5_f32, FontFamily::Proportional),
-        );
-
-        if dark {
-            let mut visuals = egui::Visuals::dark();
-            visuals.panel_fill = Color32::from_rgb(15, 23, 42);
-            visuals.window_fill = Color32::from_rgb(15, 23, 42);
-            visuals.extreme_bg_color = Color32::from_rgb(9, 14, 26);
-            visuals.faint_bg_color = Color32::from_rgb(23, 33, 56);
-            visuals.code_bg_color = Color32::from_rgb(11, 17, 32);
-            visuals.override_text_color = Some(Color32::from_rgb(241, 245, 249));
-            visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(20, 29, 49);
-            visuals.widgets.noninteractive.bg_stroke =
-                Stroke::new(1.0_f32, Color32::from_rgb(38, 52, 82));
-            visuals.widgets.inactive.bg_fill = Color32::from_rgb(30, 41, 69);
-            visuals.widgets.hovered.bg_fill = Color32::from_rgb(43, 61, 102);
-            visuals.widgets.active.bg_fill = Color32::from_rgb(37, 99, 235);
-            visuals.selection.bg_fill = Color32::from_rgb(30, 64, 175);
-            visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(147, 197, 253));
-            style.visuals = visuals;
+    fn load_snippet_template(&mut self, snip: SnippetTemplate) {
+        self.selected_snippet = snip;
+        self.active_model = snip.model_kind();
+        self.editor_script = snip.script_text().to_string();
+        let (x0, x1, y0, y1) = snip.default_domains();
+        self.home_x_min = x0;
+        self.home_x_max = x1;
+        self.home_y_min = y0;
+        self.home_y_max = y1;
+        self.reset_graph_to_home();
+        self.workspace.parameters.clear();
+        self.workspace.slider_specs.clear();
+        self.workspace.functions.clear();
+        self.workspace.function_styles.clear();
+        self.workspace.sync_math_cache();
+        self.evaluate_editor_script();
+        if snip == SnippetTemplate::SaddleSurface3D {
+            self.viewport_mode = ViewportMode::Surface3D;
         } else {
-            let mut visuals = egui::Visuals::light();
-            visuals.panel_fill = Color32::from_rgb(241, 245, 249);
-            visuals.window_fill = Color32::from_rgb(248, 250, 252);
-            visuals.extreme_bg_color = Color32::from_rgb(255, 255, 255);
-            visuals.faint_bg_color = Color32::from_rgb(226, 232, 240);
-            visuals.code_bg_color = Color32::from_rgb(248, 250, 252);
-            visuals.override_text_color = Some(Color32::from_rgb(15, 23, 42));
-            visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(255, 255, 255);
-            visuals.widgets.noninteractive.bg_stroke =
-                Stroke::new(1.0_f32, Color32::from_rgb(203, 213, 225));
-            visuals.widgets.inactive.bg_fill = Color32::from_rgb(226, 232, 240);
-            visuals.widgets.inactive.fg_stroke =
-                Stroke::new(1.0_f32, Color32::from_rgb(15, 23, 42));
-            visuals.widgets.hovered.bg_fill = Color32::from_rgb(203, 213, 225);
-            visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, Color32::from_rgb(15, 23, 42));
-            visuals.widgets.active.bg_fill = Color32::from_rgb(14, 165, 233);
-            visuals.widgets.active.fg_stroke = Stroke::new(1.0_f32, Color32::WHITE);
-            visuals.selection.bg_fill = Color32::from_rgb(186, 230, 253);
-            visuals.selection.stroke = Stroke::new(1.0_f32, Color32::from_rgb(3, 105, 161));
-            style.visuals = visuals;
+            self.viewport_mode = ViewportMode::Plot2D;
         }
+        self.status_banner = format!("Loaded model: {}", snip.label());
+    }
 
-        ctx.set_style(style);
+    fn generate_dataset_from_primary_fn(&mut self) {
+        let grid = self.build_simulation_grid(self.sim_grid_rows);
+        let mut csv_s = String::from("x,y\n");
+        for r in &grid {
+            if r.primary_y.is_finite() {
+                csv_s.push_str(&format!("{:.5},{:.5}\n", r.x, r.primary_y));
+            }
+        }
+        self.workspace.datasets.push(DataTable::from_csv_str(
+            format!("sim_{}_rows", grid.len()),
+            csv_s,
+            Color32::from_rgb(52, 211, 153),
+        ));
+        self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
+        self.right_tab = RightDockTab::Datasets;
+        self.show_right_panel = true;
+        self.right_bottom_collapsed = false;
+        self.status_banner = format!("Generated {} sampled rows from primary f(x).", grid.len());
+    }
+
+    fn save_editor_script_default(&mut self) {
+        let path = PathBuf::from("exports/workspace_script.R");
+        match save_text_file(&path, &self.editor_script) {
+            Ok(()) => {
+                self.status_banner = "Saved script to exports/workspace_script.R".to_string();
+                self.refresh_project_files();
+            }
+            Err(e) => self.status_banner = e,
+        }
+    }
+
+    fn save_notes_default(&mut self) {
+        let path = PathBuf::from(self.file_io_path_input.trim());
+        match save_text_file(&path, &self.workspace.markdown_notes) {
+            Ok(()) => {
+                self.status_banner = format!("Saved notes to {:?}", path);
+                self.refresh_project_files();
+            }
+            Err(e) => self.status_banner = e,
+        }
     }
 
     pub fn refresh_project_files(&mut self) {
@@ -2334,1137 +2348,1782 @@ print(p_main)
     }
 
     // =========================================================================
-    // TOP HEADER BAR (CLEAN, SLEEK POSITRON / RSTUDIO STYLE)
+    // 2-TIER TOP HEADER (MENU BAR + QUICK ACTION TOOLBAR)
     // =========================================================================
+
+    fn render_graph_settings_popover(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        ui.label(
+            RichText::new("Graph & Calculus Overlays")
+                .strong()
+                .color(pal.accent_blue),
+        );
+        ui.separator();
+        ui.checkbox(&mut self.show_plot_grid, "Show Coordinate Grid");
+        ui.checkbox(&mut self.show_plot_legend, "Show Series Legend");
+        ui.checkbox(&mut self.lock_equal_aspect, "Lock 1:1 Equal Aspect Ratio");
+        ui.separator();
+        ui.checkbox(&mut self.show_derivative_overlay, "Derivative Overlay f'(x)");
+        ui.checkbox(&mut self.show_integral_shade, "Integral Shade ∫f(x) dx");
+        ui.checkbox(&mut self.show_equilibrium_overlay, "Intersection / Equilibrium Marker");
+        ui.checkbox(&mut self.enable_equilibrium_solver, "Solved Equilibrium Panel");
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.show_probe_marker, "Probe x₀:");
+            ui.add(egui::DragValue::new(&mut self.probe_x).speed(0.1_f64));
+        });
+    }
 
     fn render_top_header(&mut self, ui: &mut Ui) {
         let pal = self.palette();
-        ui.horizontal_wrapped(|ui| {
+
+        // ---- Tier 1: Menu Bar ----
+        egui::menu::bar(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 6.0_f32;
             ui.label(
-                RichText::new("EconCalc Studio")
-                    .font(FontId::proportional(16.0_f32))
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.separator();
-
-            if ui
-                .selectable_label(self.show_left_panel && !self.maximize_graph, "◧ Left Sidebar")
-                .on_hover_text("Toggle Formulas, R Environment & Models Sidebar")
-                .clicked()
-            {
-                self.maximize_graph = false;
-                self.show_left_panel = !self.show_left_panel;
-            }
-            if ui
-                .selectable_label(
-                    self.show_bottom_panel && !self.maximize_graph,
-                    "◫ Bottom Console",
-                )
-                .on_hover_text("Toggle Quick Console, Script Editor & Settings Dock")
-                .clicked()
-            {
-                self.maximize_graph = false;
-                self.show_bottom_panel = !self.show_bottom_panel;
-            }
-            if ui
-                .selectable_label(self.show_right_panel && !self.maximize_graph, "◨ Right Dock")
-                .on_hover_text("Toggle Datasets, Notes & Analysis Dock")
-                .clicked()
-            {
-                self.maximize_graph = false;
-                self.show_right_panel = !self.show_right_panel;
-            }
-            if ui
-                .selectable_label(self.maximize_graph, "⛶ Maximize Graph")
-                .on_hover_text("Expand Graph Viewport to full window")
-                .clicked()
-            {
-                self.maximize_graph = !self.maximize_graph;
-            }
-
-            ui.separator();
-
-            let theme_label = if self.dark_mode {
-                "🌙 Dark"
-            } else {
-                "☀ Light"
-            };
-            if ui
-                .button(RichText::new(theme_label).color(pal.text_primary))
-                .on_hover_text("Switch between Positron Dark and High-Contrast Light theme")
-                .clicked()
-            {
-                self.dark_mode = !self.dark_mode;
-                Self::apply_positron_theme(ui.ctx(), self.dark_mode);
-            }
-
-            if ui
-                .button(RichText::new("? intro-help").color(pal.accent_blue))
-                .on_hover_text("Run `intro-help` (Application Guide)")
-                .clicked()
-            {
-                self.execute_console_command("intro-help");
-                self.floating_help_window = true;
-            }
-            if ui
-                .button(RichText::new("? general-help").color(pal.accent_purple))
-                .on_hover_text("Run `general-help` (R, LaTeX & Desmos Syntax Guide)")
-                .clicked()
-            {
-                self.execute_console_command("general-help");
-                self.floating_help_window = true;
-            }
-
-            ui.separator();
-            ui.label(
-                RichText::new(&self.status_banner)
-                    .font(FontId::proportional(12.0_f32))
-                    .color(pal.accent_green),
-            );
-        });
-    }
-
-    // =========================================================================
-    // LEFT SIDEBAR: FORMULAS & SLIDERS, R OBJECTS, MODELS LIBRARY, PROJECT FILES
-    // =========================================================================
-
-    fn render_left_sidebar(&mut self, ui: &mut Ui) {
-        let pal = self.palette();
-
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut self.left_tab,
-                LeftSidebarTab::FormulasAndSliders,
-                RichText::new("ƒ(x) Formulas").strong(),
-            );
-            ui.selectable_value(
-                &mut self.left_tab,
-                LeftSidebarTab::RObjects,
-                RichText::new(format!("📦 R Env ({})", self.workspace.r_objects.len())).strong(),
-            );
-            ui.selectable_value(
-                &mut self.left_tab,
-                LeftSidebarTab::ModelsLibrary,
-                RichText::new("📚 Models").strong(),
-            );
-            ui.selectable_value(
-                &mut self.left_tab,
-                LeftSidebarTab::ProjectFiles,
-                RichText::new("📁 Files").strong(),
-            );
-        });
-        ui.separator();
-
-        match self.left_tab {
-            LeftSidebarTab::FormulasAndSliders => self.render_formulas_and_sliders_tab(ui, pal),
-            LeftSidebarTab::RObjects => self.render_r_objects_tab(ui, pal),
-            LeftSidebarTab::ModelsLibrary => self.render_models_library_tab(ui, pal),
-            LeftSidebarTab::ProjectFiles => self.render_project_files_tab(ui, pal),
-        }
-    }
-
-    fn render_formulas_and_sliders_tab(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Symbolic Workspace")
+                RichText::new("☰")
                     .font(FontId::proportional(14.0_f32))
-                    .strong()
-                    .color(pal.accent_blue),
+                    .color(pal.text_secondary),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new("EconCalc")
+                    .font(FontId::proportional(13.5_f32))
+                    .strong()
+                    .color(pal.text_primary),
+            );
+            ui.add_space(4.0_f32);
+
+            ui.menu_button(RichText::new("File ⌄").color(pal.text_secondary), |ui| {
+                if ui.button("📄 New / Clear Workspace").clicked() {
+                    self.clear_entire_workspace();
+                    ui.close_menu();
+                }
+                if ui.button("📂 Open File from Project").clicked() {
+                    self.maximize_graph = false;
+                    self.show_left_panel = true;
+                    self.left_bottom_collapsed = false;
+                    self.left_bottom_tab = LeftBottomTab::Files;
+                    self.refresh_project_files();
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("💾 Save R Script (exports/workspace_script.R)").clicked() {
+                    self.save_editor_script_default();
+                    ui.close_menu();
+                }
+                if ui.button("📝 Save Notes (.qmd / .Rmd / .md)").clicked() {
+                    self.save_notes_default();
+                    ui.close_menu();
+                }
+                ui.separator();
                 if ui
-                    .button(RichText::new("Clear All").color(pal.accent_red))
+                    .button(
+                        RichText::new("🚀 Export Bundle & Launch Positron").color(pal.accent_green),
+                    )
+                    .clicked()
+                {
+                    self.trigger_export_pipeline();
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button(RichText::new("Edit ⌄").color(pal.text_secondary), |ui| {
+                if ui.button("📋 Copy Canonical LaTeX / TikZ").clicked() {
+                    let latex = self.generate_latex_derivation();
+                    ui.ctx().copy_text(latex);
+                    self.status_banner = "Copied canonical LaTeX/TikZ to clipboard.".to_string();
+                    ui.close_menu();
+                }
+                if ui.button("📋 Copy R / ggplot2 Script").clicked() {
+                    let r_src = self.generate_r_script_preview();
+                    ui.ctx().copy_text(r_src);
+                    self.status_banner = "Copied R/ggplot2 script to clipboard.".to_string();
+                    ui.close_menu();
+                }
+                if ui.button("🧹 Clear Console Logs").clicked() {
+                    self.console_logs.clear();
+                    self.status_banner = "Console cleared.".to_string();
+                    ui.close_menu();
+                }
+                ui.separator();
+                ui.checkbox(&mut self.smart_math_shortcuts, "Smart Math Shortcuts (α≥)");
+            });
+
+            ui.menu_button(RichText::new("View ⌄").color(pal.text_secondary), |ui| {
+                if ui.checkbox(&mut self.show_left_panel, "Left Panel (Symbolic & Files)").changed()
+                {
+                    self.maximize_graph = false;
+                }
+                if ui.checkbox(&mut self.show_right_panel, "Right Panel (Env & Data)").changed() {
+                    self.maximize_graph = false;
+                }
+                if ui.checkbox(&mut self.show_bottom_panel, "Bottom Dock (Console & Script)").changed()
+                {
+                    self.maximize_graph = false;
+                }
+                ui.checkbox(&mut self.maximize_graph, "⛶ Maximize Graph Viewport");
+                ui.separator();
+                if ui
+                    .selectable_label(self.viewport_mode == ViewportMode::Plot2D, "📈 2D Graph")
+                    .clicked()
+                {
+                    self.viewport_mode = ViewportMode::Plot2D;
+                    ui.close_menu();
+                }
+                if ui
+                    .selectable_label(self.viewport_mode == ViewportMode::Surface3D, "🧊 3D Surface")
+                    .clicked()
+                {
+                    self.viewport_mode = ViewportMode::Surface3D;
+                    ui.close_menu();
+                }
+                ui.separator();
+                ui.checkbox(&mut self.floating_datasets_window, "🗗 Pop-Out Datasets");
+                ui.checkbox(&mut self.floating_notes_window, "🗗 Pop-Out Notes");
+                ui.checkbox(&mut self.floating_help_window, "🗗 Pop-Out Help");
+                ui.checkbox(&mut self.floating_env_window, "🗗 Pop-Out Environment");
+                ui.checkbox(&mut self.floating_console_window, "🗗 Pop-Out Console");
+                ui.separator();
+                let theme_txt = if self.dark_mode {
+                    "☀ Switch to Light Theme"
+                } else {
+                    "🌙 Switch to Dark Slate Theme"
+                };
+                if ui.button(theme_txt).clicked() {
+                    self.dark_mode = !self.dark_mode;
+                    apply_bento_theme(ui.ctx(), self.dark_mode);
+                    ui.close_menu();
+                }
+            });
+
+            ui.menu_button(RichText::new("Run ⌄").color(pal.text_secondary), |ui| {
+                if ui
+                    .button(RichText::new("▶ Run Script Editor (Ctrl+Enter)").color(pal.accent_green))
+                    .clicked()
+                {
+                    self.evaluate_editor_script();
+                    ui.close_menu();
+                }
+                if ui.button("📊 Generate Dataset from f(x)").clicked() {
+                    self.generate_dataset_from_primary_fn();
+                    ui.close_menu();
+                }
+                ui.checkbox(&mut self.enable_equilibrium_solver, "⚖ Toggle Equilibrium Solver");
+            });
+
+            ui.menu_button(RichText::new("Tools ⌄").color(pal.text_secondary), |ui| {
+                if ui.button("⚙ Numeric & Calculus Settings").clicked() {
+                    self.maximize_graph = false;
+                    self.show_bottom_panel = true;
+                    self.bottom_tab = BottomDockTab::NumericAndGraphSettings;
+                    ui.close_menu();
+                }
+                ui.checkbox(&mut self.show_derivative_overlay, "Derivative Overlay f'(x)");
+                ui.checkbox(&mut self.show_integral_shade, "Integral Shade ∫f(x)");
+                ui.separator();
+                if ui.button("? Intro Help (intro-help)").clicked() {
+                    self.execute_console_command("intro-help");
+                    self.floating_help_window = true;
+                    ui.close_menu();
+                }
+                if ui.button("? General Help (general-help)").clicked() {
+                    self.execute_console_command("general-help");
+                    self.floating_help_window = true;
+                    ui.close_menu();
+                }
+            });
+
+            // Right-aligned layout & theme pills
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0_f32;
+                if ui
+                    .add(pill_button("📁", false, pal))
+                    .on_hover_text("Focus Project Files Explorer")
+                    .clicked()
+                {
+                    self.maximize_graph = false;
+                    self.show_left_panel = true;
+                    self.left_bottom_collapsed = false;
+                    self.left_bottom_tab = LeftBottomTab::Files;
+                    self.refresh_project_files();
+                }
+                if ui
+                    .add(pill_button(
+                        "⚙",
+                        self.show_bottom_panel
+                            && self.bottom_tab == BottomDockTab::NumericAndGraphSettings,
+                        pal,
+                    ))
+                    .on_hover_text("Numeric, Calculus & Graph Settings")
+                    .clicked()
+                {
+                    self.maximize_graph = false;
+                    self.show_bottom_panel = true;
+                    self.bottom_tab = BottomDockTab::NumericAndGraphSettings;
+                }
+                let theme_icon = if self.dark_mode { "🌙" } else { "☀" };
+                if ui
+                    .add(pill_button(theme_icon, false, pal))
+                    .on_hover_text("Toggle Dark Slate / Light Bento Theme")
+                    .clicked()
+                {
+                    self.dark_mode = !self.dark_mode;
+                    apply_bento_theme(ui.ctx(), self.dark_mode);
+                }
+                if ui
+                    .add(pill_button(
+                        "◨",
+                        self.show_right_panel && !self.maximize_graph,
+                        pal,
+                    ))
+                    .on_hover_text("Toggle Right Column (Environment & Data Viewer)")
+                    .clicked()
+                {
+                    self.maximize_graph = false;
+                    self.show_right_panel = !self.show_right_panel;
+                }
+                if ui
+                    .add(pill_button(
+                        "◫",
+                        self.show_bottom_panel && !self.maximize_graph,
+                        pal,
+                    ))
+                    .on_hover_text("Toggle Bottom Center Card (Console & Script)")
+                    .clicked()
+                {
+                    self.maximize_graph = false;
+                    self.show_bottom_panel = !self.show_bottom_panel;
+                }
+                if ui
+                    .add(pill_button(
+                        "◧",
+                        self.show_left_panel && !self.maximize_graph,
+                        pal,
+                    ))
+                    .on_hover_text("Toggle Left Column (Symbolic & Files)")
+                    .clicked()
+                {
+                    self.maximize_graph = false;
+                    self.show_left_panel = !self.show_left_panel;
+                }
+            });
+        });
+
+        ui.add_space(2.0_f32);
+        let sep_rect = ui.available_rect_before_wrap();
+        ui.painter().line_segment(
+            [
+                Pos2::new(sep_rect.left() - 8.0_f32, sep_rect.top()),
+                Pos2::new(sep_rect.right() + 8.0_f32, sep_rect.top()),
+            ],
+            Stroke::new(1.0_f32, pal.border.gamma_multiply(0.75_f32)),
+        );
+        ui.add_space(4.0_f32);
+
+        // ---- Tier 2: Action Toolbar ----
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 5.0_f32;
+
+            if ui
+                .add(pill_button("📄", false, pal))
+                .on_hover_text("New / Clear Workspace")
+                .clicked()
+            {
+                self.clear_entire_workspace();
+            }
+            if ui
+                .add(pill_button("📂", false, pal))
+                .on_hover_text("Refresh & Open Project Files")
+                .clicked()
+            {
+                self.maximize_graph = false;
+                self.show_left_panel = true;
+                self.left_bottom_collapsed = false;
+                self.left_bottom_tab = LeftBottomTab::Files;
+                self.refresh_project_files();
+            }
+            if ui
+                .add(pill_button("💾", false, pal))
+                .on_hover_text("Export Bundle & Launch Positron")
+                .clicked()
+            {
+                self.trigger_export_pipeline();
+            }
+
+            ui.separator();
+
+            if ui
+                .add(pill_button("🏠", false, pal))
+                .on_hover_text("Reset Graph to Home View")
+                .clicked()
+            {
+                self.reset_graph_to_home();
+            }
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("▶").strong().color(pal.accent_green))
+                        .fill(pal.pill_bg)
+                        .stroke(Stroke::new(1.0_f32, pal.border))
+                        .rounding(Rounding::same(6.0_f32)),
+                )
+                .on_hover_text("Run Script Editor (Ctrl+Enter)")
+                .clicked()
+            {
+                self.evaluate_editor_script();
+            }
+            if ui
+                .add(pill_button("✂", false, pal))
+                .on_hover_text("Clear Console Logs")
+                .clicked()
+            {
+                self.console_logs.clear();
+                self.status_banner = "Console logs cleared.".to_string();
+            }
+            if ui
+                .add(pill_button("⚙", false, pal))
+                .on_hover_text("Open Graph & Numerical Settings")
+                .clicked()
+            {
+                self.maximize_graph = false;
+                self.show_bottom_panel = true;
+                self.bottom_tab = BottomDockTab::NumericAndGraphSettings;
+            }
+
+            ui.separator();
+
+            // Quick Settings popover
+            ui.menu_button(
+                RichText::new("Settings ⌄")
+                    .font(FontId::proportional(12.2_f32))
+                    .color(pal.text_primary),
+                |ui| {
+                    self.render_graph_settings_popover(ui, pal);
+                },
+            );
+
+            // Quick Mode switcher
+            let mode_lbl = match self.viewport_mode {
+                ViewportMode::Plot2D => "Mode: 2D Graph ⌄",
+                ViewportMode::Surface3D => "Mode: 3D Surface ⌄",
+            };
+            ui.menu_button(
+                RichText::new(mode_lbl)
+                    .font(FontId::proportional(12.2_f32))
+                    .color(pal.text_primary),
+                |ui| {
+                    if ui
+                        .selectable_label(
+                            self.viewport_mode == ViewportMode::Plot2D,
+                            "📈 2D Symbolic Graph",
+                        )
+                        .clicked()
+                    {
+                        self.viewport_mode = ViewportMode::Plot2D;
+                        ui.close_menu();
+                    }
+                    if ui
+                        .selectable_label(
+                            self.viewport_mode == ViewportMode::Surface3D,
+                            "🧊 3D Surface Z = f(x, y)",
+                        )
+                        .clicked()
+                    {
+                        self.viewport_mode = ViewportMode::Surface3D;
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                    if ui.button("📝 R Script Editor").clicked() {
+                        self.maximize_graph = false;
+                        self.show_bottom_panel = true;
+                        self.bottom_tab = BottomDockTab::ScriptEditor;
+                        ui.close_menu();
+                    }
+                    if ui.button("📓 Quarto (.qmd) Notes").clicked() {
+                        self.maximize_graph = false;
+                        self.show_right_panel = true;
+                        self.right_bottom_collapsed = false;
+                        self.right_tab = RightDockTab::NotesAndReports;
+                        self.report_format = ReportFormat::QuartoQmd;
+                        ui.close_menu();
+                    }
+                },
+            );
+
+            // Quick Models Library dropdown
+            ui.menu_button(
+                RichText::new("Models Library ⌄")
+                    .font(FontId::proportional(12.2_f32))
+                    .color(pal.accent_blue),
+                |ui| {
+                    for snip in SnippetTemplate::all() {
+                        let selected = self.selected_snippet == snip;
+                        if ui
+                            .selectable_label(selected, snip.label())
+                            .on_hover_text(snip.description())
+                            .clicked()
+                        {
+                            self.load_snippet_template(snip);
+                            ui.close_menu();
+                        }
+                    }
+                },
+            );
+
+            // Right-aligned live status banner
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(&self.status_banner)
+                        .font(FontId::proportional(11.5_f32))
+                        .color(pal.text_secondary),
+                );
+            });
+        });
+    }
+
+    // =========================================================================
+    // LEFT COLUMN BENTO STACK: CARD 1 (SYMBOLIC) + CARD 2 (FILES / MODELS / FORMAT)
+    // =========================================================================
+
+    fn render_left_column(&mut self, ui: &mut Ui) {
+        let pal = self.palette();
+        let avail = ui.available_size();
+        let gap = 6.0_f32;
+        let header_h = 34.0_f32;
+
+        let (top_h, bot_h) = match (self.symbolic_card_collapsed, self.left_bottom_collapsed) {
+            (true, true) => (header_h, header_h),
+            (true, false) => (header_h, (avail.y - header_h - gap).max(110.0_f32)),
+            (false, true) => ((avail.y - header_h - gap).max(160.0_f32), header_h),
+            (false, false) => {
+                let h1 = ((avail.y - gap) * 0.64_f32).clamp(180.0_f32, (avail.y - 130.0_f32).max(180.0_f32));
+                let h2 = (avail.y - h1 - gap).max(100.0_f32);
+                (h1, h2)
+            }
+        };
+
+        render_bento_card_frame(ui, pal, Some(Vec2::new(avail.x, top_h)), |ui| {
+            self.render_symbolic_card(ui, pal);
+        });
+
+        ui.add_space(gap);
+
+        render_bento_card_frame(ui, pal, Some(Vec2::new(avail.x, bot_h)), |ui| {
+            self.render_left_bottom_card(ui, pal);
+        });
+    }
+
+    fn render_symbolic_card(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        let mut clear_clicked = false;
+        let mut collapse_sidebar = false;
+        let mut toggle_min = false;
+
+        render_card_title_header(
+            ui,
+            pal,
+            "Symbolic",
+            self.symbolic_card_collapsed,
+            |ui| {
+                if ui
+                    .add(header_icon_button("<", pal.text_secondary))
+                    .on_hover_text("Hide Left Sidebar")
+                    .clicked()
+                {
+                    collapse_sidebar = true;
+                }
+                if ui
+                    .add(header_icon_button(
+                        if self.symbolic_card_collapsed { "+" } else { "—" },
+                        pal.text_secondary,
+                    ))
+                    .on_hover_text("Collapse Symbolic Card")
+                    .clicked()
+                {
+                    toggle_min = true;
+                }
+                if ui
+                    .add(header_icon_button("Clear", pal.accent_red))
                     .on_hover_text("Clear all functions, parameters, R objects, and overlays")
                     .clicked()
                 {
-                    self.workspace.clear();
-                    self.editor_script.clear();
-                    self.show_equilibrium_overlay = false;
-                    self.enable_equilibrium_solver = false;
-                    self.status_banner = "Workspace cleared.".to_string();
+                    clear_clicked = true;
                 }
                 ui.checkbox(&mut self.smart_math_shortcuts, "α≥")
-                    .on_hover_text("Auto-convert `alpha ` -> `α `, `>=` -> `≥`, `<=` -> `≤`, `->` -> `→`");
-            });
-        });
+                    .on_hover_text(
+                        "Auto-convert `alpha ` -> `α `, `>=` -> `≥`, `<=` -> `≤`, `->` -> `→`",
+                    );
+            },
+        );
 
-        egui::Frame::group(ui.style())
-            .fill(pal.card_bg)
-            .stroke(Stroke::new(1.0_f32, pal.border))
-            .rounding(Rounding::same(5.0_f32))
-            .inner_margin(Margin::same(6.0_f32))
+        if clear_clicked {
+            self.clear_entire_workspace();
+        }
+        if collapse_sidebar {
+            self.show_left_panel = false;
+        }
+        if toggle_min {
+            self.symbolic_card_collapsed = !self.symbolic_card_collapsed;
+        }
+        if self.symbolic_card_collapsed {
+            return;
+        }
+
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_fn_sig_input)
-                            .desired_width(54.0_f32)
-                            .hint_text("f(x)"),
-                    );
-                    ui.label("=");
-                    let expr_edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.new_fn_expr_input)
-                            .desired_width(118.0_f32)
-                            .hint_text(r"\frac{1}{x}, y < x^2, (cos(t), sin(t))"),
-                    );
-                    if expr_edit.changed() && self.smart_math_shortcuts {
-                        apply_smart_math_shortcuts(&mut self.new_fn_expr_input);
-                    }
-                    if ui.button("+ Fn").clicked() {
-                        let sig_raw = self.new_fn_sig_input.trim();
-                        let expr = self.new_fn_expr_input.trim().to_string();
-                        if !expr.is_empty() {
-                            let final_sig = if sig_raw.is_empty() {
-                                format!("e{}", self.workspace.functions.len() + 1)
-                            } else if sig_raw.contains('(') || sig_raw == "r" {
-                                Self::normalize_fn_signature(sig_raw)
-                            } else {
-                                format!("{}(x)", Self::normalize_ident_name(sig_raw))
-                            };
-                            self.workspace.set_function(final_sig, expr);
+                egui::ScrollArea::vertical()
+                    .id_source("bento_symbolic_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        // ---- Collapsible Section 1: Functions & Parameters ----
+                        let fn_arrow = if self.symbolic_functions_open { "⌄" } else { "›" };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!(
+                                        "{} Functions & Parameters ({})",
+                                        fn_arrow,
+                                        self.workspace.functions.len()
+                                    ))
+                                    .font(FontId::proportional(12.5_f32))
+                                    .strong()
+                                    .color(pal.text_secondary),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE),
+                            )
+                            .clicked()
+                        {
+                            self.symbolic_functions_open = !self.symbolic_functions_open;
                         }
-                    }
-                });
-                if !self.new_fn_expr_input.trim().is_empty() {
-                    let sig_opt = (!self.new_fn_sig_input.trim().is_empty())
-                        .then_some(self.new_fn_sig_input.as_str());
-                    egui::ScrollArea::horizontal()
-                        .id_source("new_fn_live_preview_scroll")
-                        .show(ui, |ui| {
-                            render_math_preview_strip(
-                                ui,
-                                sig_opt,
-                                &self.new_fn_expr_input,
-                                &self.workspace.compiled_math.known_fn_names,
-                                14.5_f32,
-                                pal.text_primary,
-                                Some(pal.accent_blue),
-                                pal.extreme_bg,
-                                pal.border,
-                                pal.accent_red,
-                            );
-                        });
-                }
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_param_name_input)
-                            .desired_width(54.0_f32)
-                            .hint_text("alpha"),
-                    );
-                    ui.label("=");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.new_param_val_input)
-                            .desired_width(118.0_f32)
-                            .hint_text("1.0"),
-                    );
-                    if ui.button("+ Slider").clicked() {
-                        let name = Self::normalize_ident_name(&self.new_param_name_input);
-                        if let Ok(val) = self.eval_parameter_rhs(&self.new_param_val_input) {
-                            if !name.is_empty() && val.is_finite() {
-                                self.workspace.set_parameter(name, val);
-                            }
-                        }
-                    }
-                });
-            });
 
-        ui.add_space(4.0_f32);
-
-        egui::ScrollArea::vertical()
-            .id_source("left_formulas_sliders_scroll")
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(format!("Functions ({})", self.workspace.functions.len()))
-                        .strong()
-                        .color(pal.text_secondary),
-                );
-
-                if let Some(ref cyc) = self.workspace.compiled_math.cycle_error {
-                    egui::Frame::group(ui.style())
-                        .fill(pal.accent_red.gamma_multiply(0.14_f32))
-                        .stroke(Stroke::new(1.0_f32, pal.accent_red))
-                        .rounding(Rounding::same(5.0_f32))
-                        .inner_margin(Margin::same(5.0_f32))
-                        .show(ui, |ui| {
-                            ui.label(
-                                RichText::new(format!("⚠ {}", cyc))
-                                    .font(FontId::proportional(11.5_f32))
-                                    .color(pal.accent_red),
-                            );
-                        });
-                    ui.add_space(3.0_f32);
-                }
-
-                if self.workspace.functions.is_empty() {
-                    ui.label(
-                        RichText::new("No active functions. Add one above or load a Model.")
-                            .italics()
-                            .color(pal.text_muted),
-                    );
-                } else {
-                    let fn_keys: Vec<String> = self.workspace.functions.keys().cloned().collect();
-                    let existing_params: std::collections::HashSet<String> =
-                        self.workspace.parameters.keys().cloned().collect();
-                    let existing_r_objs: std::collections::HashSet<String> =
-                        self.workspace.r_objects.keys().cloned().collect();
-                    let mut remove_key: Option<String> = None;
-                    let mut add_sliders: Vec<String> = Vec::new();
-                    let mut latex_copied_msg: Option<String> = None;
-
-                    for (idx, sig) in fn_keys.iter().enumerate() {
-                        let mut expr = self
-                            .workspace
-                            .functions
-                            .get(sig)
-                            .cloned()
-                            .unwrap_or_default();
-                        let mut style = self
-                            .workspace
-                            .function_styles
-                            .get(sig)
-                            .cloned()
-                            .unwrap_or_else(|| FunctionStyle::default_for_index(idx));
-
-                        egui::Frame::group(ui.style())
-                            .fill(pal.card_bg)
-                            .stroke(Stroke::new(1.0_f32, style.color.gamma_multiply(0.65_f32)))
-                            .rounding(Rounding::same(6.0_f32))
-                            .inner_margin(Margin::same(6.0_f32))
-                            .show(ui, |ui| {
-                                // 1. Prominent live native "Math-as-Written" typeset preview
-                                let preview = egui::ScrollArea::horizontal()
-                                    .id_source(format!("math_preview_scroll_{}", sig))
+                        if self.symbolic_functions_open {
+                            if let Some(ref cyc) = self.workspace.compiled_math.cycle_error {
+                                egui::Frame::none()
+                                    .fill(pal.accent_red.gamma_multiply(0.14_f32))
+                                    .stroke(Stroke::new(1.0_f32, pal.accent_red))
+                                    .rounding(Rounding::same(6.0_f32))
+                                    .inner_margin(Margin::same(5.0_f32))
                                     .show(ui, |ui| {
-                                        render_math_preview_strip(
-                                            ui,
-                                            Some(sig.as_str()),
-                                            &expr,
-                                            &self.workspace.compiled_math.known_fn_names,
-                                            15.5_f32,
-                                            pal.text_primary,
-                                            Some(style.color),
-                                            pal.extreme_bg,
-                                            pal.border,
-                                            pal.accent_red,
-                                        )
-                                    })
-                                    .inner;
-
-                                ui.add_space(3.0_f32);
-
-                                // 2. Inline expression editor + action buttons
-                                ui.horizontal(|ui| {
-                                    ui.checkbox(&mut style.visible, "");
-                                    ui.color_edit_button_srgba(&mut style.color);
-                                    let edited = ui.add(
-                                        egui::TextEdit::singleline(&mut expr)
-                                            .font(FontId::monospace(11.8_f32))
-                                            .desired_width((ui.available_width() - 92.0_f32).max(75.0_f32)),
-                                    );
-                                    if edited.changed() {
-                                        if self.smart_math_shortcuts {
-                                            apply_smart_math_shortcuts(&mut expr);
-                                        }
-                                        self.workspace.functions.insert(sig.clone(), expr.clone());
-                                        self.workspace.sync_math_cache();
-                                    }
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .small_button(
-                                                    RichText::new("×").color(pal.accent_red),
-                                                )
-                                                .on_hover_text("Delete function")
-                                                .clicked()
-                                            {
-                                                remove_key = Some(sig.clone());
-                                            }
-                                            if ui
-                                                .small_button("⚙")
-                                                .on_hover_text(
-                                                    "Customize curve appearance, role & domain",
-                                                )
-                                                .clicked()
-                                            {
-                                                style.settings_open = !style.settings_open;
-                                            }
-                                            if ui
-                                                .small_button(
-                                                    RichText::new("TeX")
-                                                        .font(FontId::monospace(10.5_f32))
-                                                        .color(pal.accent_blue),
-                                                )
-                                                .on_hover_text("Copy canonical LaTeX from AST")
-                                                .clicked()
-                                            {
-                                                ui.ctx().copy_text(preview.latex.clone());
-                                                latex_copied_msg = Some(format!(
-                                                    "Copied LaTeX: {}",
-                                                    preview.latex
-                                                ));
-                                            }
-                                        },
-                                    );
-                                });
-
-                                // 3. Live evaluation pill or inline syntax diagnostic
-                                if let Some(ref err) = preview.error {
-                                    let (_, col) = err.span.line_col(&expr);
-                                    ui.label(
-                                        RichText::new(format!("⚠ col {}: {}", col, err.message))
-                                            .font(FontId::monospace(11.0_f32))
-                                            .color(pal.accent_red),
-                                    );
-                                } else if let Ok(plottable) =
-                                    self.workspace.compiled_math.classify_entry(sig, &expr)
-                                {
-                                    let ext_bridge = REngineMathBridge {
-                                        r_objects: &self.workspace.r_objects,
-                                    };
-                                    let eval_ctx = self.build_eval_context(&ext_bridge);
-                                    let mut scratch = EvalScratch::new();
-
-                                    ui.horizontal_wrapped(|ui| match plottable {
-                                        PlottableEntry::ScalarOnly { compiled } => {
-                                            if let Ok(v) = compiled.eval(&eval_ctx, &[], &mut scratch)
-                                            {
-                                                if v.is_finite() {
-                                                    ui.label(
-                                                        RichText::new(format!("= {:.4}", v))
-                                                            .font(FontId::monospace(11.5_f32))
-                                                            .strong()
-                                                            .color(pal.accent_green),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        PlottableEntry::Explicit1D { compiled } => {
-                                            if let Ok(v) = compiled.eval(
-                                                &eval_ctx,
-                                                &[
-                                                    ("x", self.probe_x),
-                                                    ("y", 1.0_f64),
-                                                    ("L", self.probe_x),
-                                                    ("K", 1.0_f64),
-                                                    ("Q", self.probe_x),
-                                                    ("Y", self.probe_x),
-                                                ],
-                                                &mut scratch,
-                                            ) {
-                                                if v.is_finite() {
-                                                    ui.label(
-                                                        RichText::new(format!(
-                                                            "@ x={:.2} → {:.4}",
-                                                            self.probe_x, v
-                                                        ))
-                                                        .font(FontId::monospace(10.8_f32))
-                                                        .color(pal.text_muted),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        PlottableEntry::ImplicitEquation { .. } => {
-                                            ui.label(
-                                                RichText::new("Implicit Contour")
-                                                    .font(FontId::monospace(10.5_f32))
-                                                    .color(pal.accent_purple),
-                                            );
-                                        }
-                                        PlottableEntry::ExplicitYInequality { .. }
-                                        | PlottableEntry::ImplicitInequality { .. } => {
-                                            ui.label(
-                                                RichText::new("Shaded Inequality")
-                                                    .font(FontId::monospace(10.5_f32))
-                                                    .color(pal.accent_amber),
-                                            );
-                                        }
-                                        PlottableEntry::Parametric { .. } => {
-                                            ui.label(
-                                                RichText::new("Parametric Curve")
-                                                    .font(FontId::monospace(10.5_f32))
-                                                    .color(pal.accent_green),
-                                            );
-                                        }
-                                        PlottableEntry::Polar { .. } => {
-                                            ui.label(
-                                                RichText::new("Polar Curve r(θ)")
-                                                    .font(FontId::monospace(10.5_f32))
-                                                    .color(pal.accent_blue),
-                                            );
-                                        }
+                                        ui.label(
+                                            RichText::new(format!("⚠ {}", cyc))
+                                                .font(FontId::proportional(11.2_f32))
+                                                .color(pal.accent_red),
+                                        );
                                     });
-                                }
+                                ui.add_space(4.0_f32);
+                            }
 
-                                // 4. Automatic unbound parameter discovery -> reactive slider creation
-                                if let Some(ref stmt) = preview.parsed_statement {
-                                    let mut bound_locals = std::collections::HashSet::new();
-                                    if let Some((_, params)) = math::parse_function_signature(sig) {
-                                        for p in params {
-                                            bound_locals.insert(p);
-                                        }
-                                    }
-                                    let mut unbound = Vec::new();
-                                    let mut collect_from = |e: &math::SpannedExpr| {
-                                        for sym in math::graph::discover_unbound_symbols(
-                                            e,
-                                            &bound_locals,
-                                            &self.workspace.compiled_math.known_fn_names,
-                                            &existing_params,
-                                            &existing_r_objs,
-                                        ) {
-                                            if !unbound.contains(&sym) {
-                                                unbound.push(sym);
-                                            }
-                                        }
-                                    };
-                                    match stmt {
-                                        math::MathStatement::Expr(e)
-                                        | math::MathStatement::FunctionDef { body: e, .. }
-                                        | math::MathStatement::ParamAssign { value: e, .. }
-                                        | math::MathStatement::Polar { r_expr: e, .. } => {
-                                            collect_from(e);
-                                        }
-                                        math::MathStatement::Equation { lhs, rhs }
-                                        | math::MathStatement::Inequality { lhs, rhs, .. } => {
-                                            collect_from(lhs);
-                                            collect_from(rhs);
-                                        }
-                                        math::MathStatement::Parametric { x_expr, y_expr, .. } => {
-                                            collect_from(x_expr);
-                                            collect_from(y_expr);
-                                        }
-                                    }
-                                    if !unbound.is_empty() {
-                                        ui.horizontal_wrapped(|ui| {
-                                            ui.label(
-                                                RichText::new("Add slider:")
-                                                    .font(FontId::proportional(11.0_f32))
-                                                    .color(pal.accent_amber),
-                                            );
-                                            for sym in &unbound {
-                                                let disp = math::ast::ident_to_pretty_unicode(sym);
-                                                if ui.small_button(format!("+ {}", disp)).clicked()
-                                                {
-                                                    add_sliders.push(sym.clone());
+                            if self.workspace.functions.is_empty() {
+                                ui.label(
+                                    RichText::new("No active functions. Add one below or load a Model.")
+                                        .italics()
+                                        .color(pal.text_muted),
+                                );
+                            } else {
+                                let fn_keys: Vec<String> =
+                                    self.workspace.functions.keys().cloned().collect();
+                                let existing_params: std::collections::HashSet<String> =
+                                    self.workspace.parameters.keys().cloned().collect();
+                                let existing_r_objs: std::collections::HashSet<String> =
+                                    self.workspace.r_objects.keys().cloned().collect();
+                                let mut remove_key: Option<String> = None;
+                                let mut add_sliders: Vec<String> = Vec::new();
+                                let mut latex_copied_msg: Option<String> = None;
+
+                                for (idx, sig) in fn_keys.iter().enumerate() {
+                                    let mut expr = self
+                                        .workspace
+                                        .functions
+                                        .get(sig)
+                                        .cloned()
+                                        .unwrap_or_default();
+                                    let mut style = self
+                                        .workspace
+                                        .function_styles
+                                        .get(sig)
+                                        .cloned()
+                                        .unwrap_or_else(|| FunctionStyle::default_for_index(idx));
+
+                                    capsule_frame(pal, style.color.gamma_multiply(0.55_f32))
+                                        .show(ui, |ui| {
+                                            // 1. Live native "Math-as-Written" preview
+                                            let preview = egui::ScrollArea::horizontal()
+                                                .id_source(format!("math_preview_scroll_{}", sig))
+                                                .show(ui, |ui| {
+                                                    render_math_preview_strip(
+                                                        ui,
+                                                        Some(sig.as_str()),
+                                                        &expr,
+                                                        &self.workspace.compiled_math.known_fn_names,
+                                                        15.0_f32,
+                                                        pal.text_primary,
+                                                        Some(style.color),
+                                                        pal.extreme_bg,
+                                                        pal.border,
+                                                        pal.accent_red,
+                                                    )
+                                                })
+                                                .inner;
+
+                                            ui.add_space(4.0_f32);
+
+                                            // 2. Edit row + divided `×` action on right
+                                            ui.horizontal(|ui| {
+                                                ui.checkbox(&mut style.visible, "");
+                                                ui.color_edit_button_srgba(&mut style.color);
+                                                let edited = ui.add(
+                                                    egui::TextEdit::singleline(&mut expr)
+                                                        .font(FontId::monospace(11.6_f32))
+                                                        .desired_width(
+                                                            (ui.available_width() - 96.0_f32)
+                                                                .max(68.0_f32),
+                                                        ),
+                                                );
+                                                if edited.changed() {
+                                                    if self.smart_math_shortcuts {
+                                                        apply_smart_math_shortcuts(&mut expr);
+                                                    }
+                                                    self.workspace
+                                                        .functions
+                                                        .insert(sig.clone(), expr.clone());
+                                                    self.workspace.sync_math_cache();
                                                 }
+
+                                                ui.with_layout(
+                                                    egui::Layout::right_to_left(egui::Align::Center),
+                                                    |ui| {
+                                                        ui.spacing_mut().item_spacing.x = 3.0_f32;
+                                                        if ui
+                                                            .add(
+                                                                egui::Button::new(
+                                                                    RichText::new("×")
+                                                                        .strong()
+                                                                        .color(pal.accent_red),
+                                                                )
+                                                                .fill(pal.card_bg)
+                                                                .stroke(Stroke::new(
+                                                                    1.0_f32, pal.border,
+                                                                ))
+                                                                .rounding(Rounding::same(5.0_f32)),
+                                                            )
+                                                            .on_hover_text("Delete function")
+                                                            .clicked()
+                                                        {
+                                                            remove_key = Some(sig.clone());
+                                                        }
+                                                        ui.separator();
+                                                        if ui
+                                                            .add(header_icon_button(
+                                                                "⚙",
+                                                                pal.text_secondary,
+                                                            ))
+                                                            .on_hover_text(
+                                                                "Curve style, role & domain",
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            style.settings_open =
+                                                                !style.settings_open;
+                                                        }
+                                                        if ui
+                                                            .add(header_icon_button(
+                                                                "TeX",
+                                                                pal.accent_blue,
+                                                            ))
+                                                            .on_hover_text(
+                                                                "Copy canonical LaTeX from AST",
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            ui.ctx()
+                                                                .copy_text(preview.latex.clone());
+                                                            latex_copied_msg = Some(format!(
+                                                                "Copied LaTeX: {}",
+                                                                preview.latex
+                                                            ));
+                                                        }
+                                                    },
+                                                );
+                                            });
+
+                                            // 3. Live evaluation / type pill or inline syntax error
+                                            if let Some(ref err) = preview.error {
+                                                let (_, col) = err.span.line_col(&expr);
+                                                ui.label(
+                                                    RichText::new(format!(
+                                                        "⚠ col {}: {}",
+                                                        col, err.message
+                                                    ))
+                                                    .font(FontId::monospace(10.8_f32))
+                                                    .color(pal.accent_red),
+                                                );
+                                            } else if let Ok(plottable) =
+                                                self.workspace.compiled_math.classify_entry(sig, &expr)
+                                            {
+                                                let ext_bridge = REngineMathBridge {
+                                                    r_objects: &self.workspace.r_objects,
+                                                };
+                                                let eval_ctx = self.build_eval_context(&ext_bridge);
+                                                let mut scratch = EvalScratch::new();
+
+                                                ui.horizontal_wrapped(|ui| match plottable {
+                                                    PlottableEntry::ScalarOnly { compiled } => {
+                                                        if let Ok(v) = compiled
+                                                            .eval(&eval_ctx, &[], &mut scratch)
+                                                        {
+                                                            if v.is_finite() {
+                                                                ui.label(
+                                                                    RichText::new(format!(
+                                                                        "= {:.4}",
+                                                                        v
+                                                                    ))
+                                                                    .font(FontId::monospace(11.2_f32))
+                                                                    .strong()
+                                                                    .color(pal.accent_green),
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    PlottableEntry::Explicit1D { compiled } => {
+                                                        if let Ok(v) = compiled.eval(
+                                                            &eval_ctx,
+                                                            &[
+                                                                ("x", self.probe_x),
+                                                                ("y", 1.0_f64),
+                                                                ("L", self.probe_x),
+                                                                ("K", 1.0_f64),
+                                                                ("Q", self.probe_x),
+                                                                ("Y", self.probe_x),
+                                                            ],
+                                                            &mut scratch,
+                                                        ) {
+                                                            if v.is_finite() {
+                                                                ui.label(
+                                                                    RichText::new(format!(
+                                                                        "@ x={:.2} → {:.4}",
+                                                                        self.probe_x, v
+                                                                    ))
+                                                                    .font(FontId::monospace(10.5_f32))
+                                                                    .color(pal.text_muted),
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    PlottableEntry::ImplicitEquation { .. } => {
+                                                        ui.label(
+                                                            RichText::new("Implicit Contour")
+                                                                .font(FontId::monospace(10.5_f32))
+                                                                .color(pal.accent_purple),
+                                                        );
+                                                    }
+                                                    PlottableEntry::ExplicitYInequality { .. }
+                                                    | PlottableEntry::ImplicitInequality { .. } => {
+                                                        ui.label(
+                                                            RichText::new("Shaded Inequality")
+                                                                .font(FontId::monospace(10.5_f32))
+                                                                .color(pal.accent_amber),
+                                                        );
+                                                    }
+                                                    PlottableEntry::Parametric { .. } => {
+                                                        ui.label(
+                                                            RichText::new("Parametric Curve")
+                                                                .font(FontId::monospace(10.5_f32))
+                                                                .color(pal.accent_green),
+                                                        );
+                                                    }
+                                                    PlottableEntry::Polar { .. } => {
+                                                        ui.label(
+                                                            RichText::new("Polar Curve r(θ)")
+                                                                .font(FontId::monospace(10.5_f32))
+                                                                .color(pal.accent_blue),
+                                                        );
+                                                    }
+                                                });
+                                            }
+
+                                            // 4. Automatic unbound parameter discovery pills
+                                            if let Some(ref stmt) = preview.parsed_statement {
+                                                let mut bound_locals =
+                                                    std::collections::HashSet::new();
+                                                if let Some((_, params)) =
+                                                    math::parse_function_signature(sig)
+                                                {
+                                                    for p in params {
+                                                        bound_locals.insert(p);
+                                                    }
+                                                }
+                                                let mut unbound = Vec::new();
+                                                let mut collect_from = |e: &math::SpannedExpr| {
+                                                    for sym in math::graph::discover_unbound_symbols(
+                                                        e,
+                                                        &bound_locals,
+                                                        &self.workspace.compiled_math.known_fn_names,
+                                                        &existing_params,
+                                                        &existing_r_objs,
+                                                    ) {
+                                                        if !unbound.contains(&sym) {
+                                                            unbound.push(sym);
+                                                        }
+                                                    }
+                                                };
+                                                match stmt {
+                                                    math::MathStatement::Expr(e)
+                                                    | math::MathStatement::FunctionDef {
+                                                        body: e,
+                                                        ..
+                                                    }
+                                                    | math::MathStatement::ParamAssign {
+                                                        value: e,
+                                                        ..
+                                                    }
+                                                    | math::MathStatement::Polar {
+                                                        r_expr: e, ..
+                                                    } => collect_from(e),
+                                                    math::MathStatement::Equation { lhs, rhs }
+                                                    | math::MathStatement::Inequality {
+                                                        lhs,
+                                                        rhs,
+                                                        ..
+                                                    } => {
+                                                        collect_from(lhs);
+                                                        collect_from(rhs);
+                                                    }
+                                                    math::MathStatement::Parametric {
+                                                        x_expr,
+                                                        y_expr,
+                                                        ..
+                                                    } => {
+                                                        collect_from(x_expr);
+                                                        collect_from(y_expr);
+                                                    }
+                                                }
+                                                if !unbound.is_empty() {
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        ui.label(
+                                                            RichText::new("Add slider:")
+                                                                .font(FontId::proportional(10.8_f32))
+                                                                .color(pal.accent_amber),
+                                                        );
+                                                        for sym in &unbound {
+                                                            let disp =
+                                                                math::ast::ident_to_pretty_unicode(
+                                                                    sym,
+                                                                );
+                                                            if ui
+                                                                .small_button(format!("+ {}", disp))
+                                                                .clicked()
+                                                            {
+                                                                add_sliders.push(sym.clone());
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }
+
+                                            // 5. Expandable curve settings
+                                            if style.settings_open {
+                                                ui.separator();
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label(
+                                                        RichText::new("Style:")
+                                                            .color(pal.text_secondary),
+                                                    );
+                                                    for ls in [
+                                                        CurveLineStyle::Solid,
+                                                        CurveLineStyle::Dashed,
+                                                        CurveLineStyle::Dotted,
+                                                    ] {
+                                                        ui.selectable_value(
+                                                            &mut style.line_style,
+                                                            ls,
+                                                            ls.label(),
+                                                        );
+                                                    }
+                                                });
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label(
+                                                        RichText::new("Role:")
+                                                            .color(pal.text_secondary),
+                                                    );
+                                                    egui::ComboBox::from_id_source(format!(
+                                                        "role_{}",
+                                                        sig
+                                                    ))
+                                                    .selected_text(style.role.label())
+                                                    .show_ui(ui, |ui| {
+                                                        for r in [
+                                                            FunctionPlotRole::StandardCurve,
+                                                            FunctionPlotRole::AreaUnderCurve,
+                                                            FunctionPlotRole::SampledPoints,
+                                                            FunctionPlotRole::Surface3DOnly,
+                                                        ] {
+                                                            ui.selectable_value(
+                                                                &mut style.role,
+                                                                r,
+                                                                r.label(),
+                                                            );
+                                                        }
+                                                    });
+                                                    ui.add(
+                                                        egui::Slider::new(
+                                                            &mut style.stroke_width,
+                                                            1.0_f32..=5.0_f32,
+                                                        )
+                                                        .text("px"),
+                                                    );
+                                                });
+
+                                                let mut has_custom_dom =
+                                                    style.custom_domain.is_some();
+                                                ui.horizontal_wrapped(|ui| {
+                                                    if ui
+                                                        .checkbox(
+                                                            &mut has_custom_dom,
+                                                            "Restrict Domain",
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        if has_custom_dom {
+                                                            style.custom_domain = Some((
+                                                                self.domain_min,
+                                                                self.domain_max,
+                                                            ));
+                                                        } else {
+                                                            style.custom_domain = None;
+                                                        }
+                                                    }
+                                                    if let Some((ref mut d0, ref mut d1)) =
+                                                        style.custom_domain
+                                                    {
+                                                        ui.add(
+                                                            egui::DragValue::new(d0)
+                                                                .speed(0.1_f64)
+                                                                .prefix("x_min: "),
+                                                        );
+                                                        ui.add(
+                                                            egui::DragValue::new(d1)
+                                                                .speed(0.1_f64)
+                                                                .prefix("x_max: "),
+                                                        );
+                                                    }
+                                                });
                                             }
                                         });
-                                    }
+
+                                    self.workspace.function_styles.insert(sig.clone(), style);
+                                    ui.add_space(4.0_f32);
                                 }
 
-                                if style.settings_open {
-                                    ui.separator();
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(
-                                            RichText::new("Style:").color(pal.text_secondary),
-                                        );
-                                        for ls in [
-                                            CurveLineStyle::Solid,
-                                            CurveLineStyle::Dashed,
-                                            CurveLineStyle::Dotted,
-                                        ] {
-                                            ui.selectable_value(
-                                                &mut style.line_style,
-                                                ls,
-                                                ls.label(),
+                                if let Some(k) = remove_key {
+                                    self.workspace.functions.remove(&k);
+                                    self.workspace.function_styles.remove(&k);
+                                    self.workspace.sync_math_cache();
+                                }
+                                for sym in add_sliders {
+                                    self.workspace.set_parameter(sym, 1.0_f64);
+                                }
+                                if let Some(msg) = latex_copied_msg {
+                                    self.status_banner = msg;
+                                }
+                            }
+
+                            // ---- New Function Composer + Full-Width "Add Function" Button ----
+                            capsule_frame(pal, pal.border).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.new_fn_sig_input)
+                                            .font(FontId::monospace(11.8_f32))
+                                            .desired_width(52.0_f32)
+                                            .hint_text("f(x)"),
+                                    );
+                                    ui.label(RichText::new("=").color(pal.text_secondary));
+                                    let expr_edit = ui.add(
+                                        egui::TextEdit::singleline(&mut self.new_fn_expr_input)
+                                            .font(FontId::monospace(11.8_f32))
+                                            .desired_width((ui.available_width() - 4.0_f32).max(60.0_f32))
+                                            .hint_text(r"\frac{1}{x}, y < x^2, (cos(t), sin(t))"),
+                                    );
+                                    if expr_edit.changed() && self.smart_math_shortcuts {
+                                        apply_smart_math_shortcuts(&mut self.new_fn_expr_input);
+                                    }
+                                });
+                                if !self.new_fn_expr_input.trim().is_empty() {
+                                    ui.add_space(3.0_f32);
+                                    let sig_opt = (!self.new_fn_sig_input.trim().is_empty())
+                                        .then_some(self.new_fn_sig_input.as_str());
+                                    egui::ScrollArea::horizontal()
+                                        .id_source("new_fn_live_preview_scroll")
+                                        .show(ui, |ui| {
+                                            render_math_preview_strip(
+                                                ui,
+                                                sig_opt,
+                                                &self.new_fn_expr_input,
+                                                &self.workspace.compiled_math.known_fn_names,
+                                                14.0_f32,
+                                                pal.text_primary,
+                                                Some(pal.accent_blue),
+                                                pal.extreme_bg,
+                                                pal.border,
+                                                pal.accent_red,
                                             );
+                                        });
+                                }
+                            });
+                            ui.add_space(4.0_f32);
+
+                            let add_fn_btn = egui::Button::new(
+                                RichText::new("Add Function")
+                                    .font(FontId::proportional(12.5_f32))
+                                    .strong()
+                                    .color(pal.text_primary),
+                            )
+                            .fill(pal.pill_bg)
+                            .stroke(Stroke::new(1.0_f32, pal.border))
+                            .rounding(Rounding::same(8.0_f32))
+                            .min_size(Vec2::new(ui.available_width(), 28.0_f32));
+                            if ui.add(add_fn_btn).clicked() {
+                                let sig_raw = self.new_fn_sig_input.trim();
+                                let expr = self.new_fn_expr_input.trim().to_string();
+                                if !expr.is_empty() {
+                                    let final_sig = if sig_raw.is_empty() {
+                                        format!("e{}", self.workspace.functions.len() + 1)
+                                    } else if sig_raw.contains('(') || sig_raw == "r" {
+                                        Self::normalize_fn_signature(sig_raw)
+                                    } else {
+                                        format!("{}(x)", Self::normalize_ident_name(sig_raw))
+                                    };
+                                    self.workspace.set_function(final_sig, expr);
+                                }
+                            }
+                        }
+
+                        ui.add_space(8.0_f32);
+
+                        // ---- Collapsible Section 2: Sliders ----
+                        let sl_arrow = if self.symbolic_sliders_open { "⌄" } else { "›" };
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new(format!(
+                                        "{} Sliders ({})",
+                                        sl_arrow,
+                                        self.workspace.parameters.len()
+                                    ))
+                                    .font(FontId::proportional(12.5_f32))
+                                    .strong()
+                                    .color(pal.text_secondary),
+                                )
+                                .fill(Color32::TRANSPARENT)
+                                .stroke(Stroke::NONE),
+                            )
+                            .clicked()
+                        {
+                            self.symbolic_sliders_open = !self.symbolic_sliders_open;
+                        }
+
+                        if self.symbolic_sliders_open {
+                            if self.workspace.parameters.is_empty() {
+                                ui.label(
+                                    RichText::new("No active sliders.")
+                                        .italics()
+                                        .color(pal.text_muted),
+                                );
+                            } else {
+                                let param_names: Vec<String> =
+                                    self.workspace.parameters.keys().cloned().collect();
+                                let mut remove_param: Option<String> = None;
+
+                                for name in param_names {
+                                    let mut val = self
+                                        .workspace
+                                        .parameters
+                                        .get(&name)
+                                        .copied()
+                                        .unwrap_or(1.0_f64);
+                                    let mut spec = self
+                                        .workspace
+                                        .slider_specs
+                                        .get(&name)
+                                        .cloned()
+                                        .unwrap_or_else(|| SliderSpec::for_parameter(&name, val));
+
+                                    capsule_frame(pal, pal.border).show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(Self::format_symbolic_math(&name))
+                                                    .font(FontId::monospace(12.8_f32))
+                                                    .strong()
+                                                    .color(pal.text_primary),
+                                            );
+                                            ui.label(RichText::new("=").color(pal.text_secondary));
+                                            if ui
+                                                .add(
+                                                    egui::DragValue::new(&mut val)
+                                                        .speed(spec.step.max(1e-4_f64)),
+                                                )
+                                                .changed()
+                                            {
+                                                self.workspace
+                                                    .parameters
+                                                    .insert(name.clone(), val);
+                                                self.workspace
+                                                    .r_objects
+                                                    .insert(name.clone(), RObject::scalar(val));
+                                            }
+
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.spacing_mut().item_spacing.x = 3.0_f32;
+                                                    if ui
+                                                        .add(header_icon_button(
+                                                            "×",
+                                                            pal.accent_red,
+                                                        ))
+                                                        .on_hover_text("Remove parameter")
+                                                        .clicked()
+                                                    {
+                                                        remove_param = Some(name.clone());
+                                                    }
+                                                    if ui
+                                                        .add(header_icon_button(
+                                                            &format!(
+                                                                "[{:.0}..{:.0}]",
+                                                                spec.min, spec.max
+                                                            ),
+                                                            pal.text_muted,
+                                                        ))
+                                                        .on_hover_text("Edit slider min, max, step")
+                                                        .clicked()
+                                                    {
+                                                        spec.edit_bounds_open =
+                                                            !spec.edit_bounds_open;
+                                                    }
+                                                },
+                                            );
+                                        });
+
+                                        let safe_min = spec.min.min(spec.max - 1e-6_f64);
+                                        let safe_max = spec.max.max(safe_min + 1e-6_f64);
+                                        ui.spacing_mut().slider_width =
+                                            (ui.available_width() - 6.0_f32).max(60.0_f32);
+                                        let mut slider_control =
+                                            egui::Slider::new(&mut val, safe_min..=safe_max)
+                                                .show_value(false);
+                                        if spec.step > 0.0_f64 {
+                                            slider_control = slider_control.step_by(spec.step);
                                         }
-                                    });
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(RichText::new("Role:").color(pal.text_secondary));
-                                        egui::ComboBox::from_id_source(format!("role_{}", sig))
-                                            .selected_text(style.role.label())
-                                            .show_ui(ui, |ui| {
-                                                for r in [
-                                                    FunctionPlotRole::StandardCurve,
-                                                    FunctionPlotRole::AreaUnderCurve,
-                                                    FunctionPlotRole::SampledPoints,
-                                                    FunctionPlotRole::Surface3DOnly,
-                                                ] {
-                                                    ui.selectable_value(
-                                                        &mut style.role,
-                                                        r,
-                                                        r.label(),
-                                                    );
+                                        if ui.add(slider_control).changed() {
+                                            self.workspace.parameters.insert(name.clone(), val);
+                                            self.workspace
+                                                .r_objects
+                                                .insert(name.clone(), RObject::scalar(val));
+                                        }
+
+                                        if spec.edit_bounds_open {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.add(
+                                                    egui::DragValue::new(&mut spec.min)
+                                                        .speed(0.1_f64)
+                                                        .prefix("Min: "),
+                                                );
+                                                ui.add(
+                                                    egui::DragValue::new(&mut spec.max)
+                                                        .speed(0.1_f64)
+                                                        .prefix("Max: "),
+                                                );
+                                                ui.add(
+                                                    egui::DragValue::new(&mut spec.step)
+                                                        .speed(0.01_f64)
+                                                        .prefix("Step: "),
+                                                );
+                                                if spec.step < 0.0_f64 {
+                                                    spec.step = 0.0_f64;
                                                 }
                                             });
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut style.stroke_width,
-                                                1.0_f32..=5.0_f32,
-                                            )
-                                            .text("px"),
-                                        );
-                                    });
-
-                                    let mut has_custom_dom = style.custom_domain.is_some();
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .checkbox(&mut has_custom_dom, "Restrict Domain")
-                                            .changed()
-                                        {
-                                            if has_custom_dom {
-                                                style.custom_domain =
-                                                    Some((self.domain_min, self.domain_max));
-                                            } else {
-                                                style.custom_domain = None;
-                                            }
-                                        }
-                                        if let Some((ref mut d0, ref mut d1)) = style.custom_domain
-                                        {
-                                            ui.add(
-                                                egui::DragValue::new(d0)
-                                                    .speed(0.1_f64)
-                                                    .prefix("x_min: "),
-                                            );
-                                            ui.add(
-                                                egui::DragValue::new(d1)
-                                                    .speed(0.1_f64)
-                                                    .prefix("x_max: "),
-                                            );
                                         }
                                     });
-                                }
-                            });
 
-                        self.workspace.function_styles.insert(sig.clone(), style);
-                        ui.add_space(3.0_f32);
-                    }
-
-                    if let Some(k) = remove_key {
-                        self.workspace.functions.remove(&k);
-                        self.workspace.function_styles.remove(&k);
-                        self.workspace.sync_math_cache();
-                    }
-                    for sym in add_sliders {
-                        self.workspace.set_parameter(sym, 1.0_f64);
-                    }
-                    if let Some(msg) = latex_copied_msg {
-                        self.status_banner = msg;
-                    }
-                }
-
-                ui.add_space(6.0_f32);
-                ui.separator();
-
-                ui.label(
-                    RichText::new(format!(
-                        "Parameters & Sliders ({})",
-                        self.workspace.parameters.len()
-                    ))
-                    .strong()
-                    .color(pal.text_secondary),
-                );
-
-                if self.workspace.parameters.is_empty() {
-                    ui.label(
-                        RichText::new("No active parameters.")
-                            .italics()
-                            .color(pal.text_muted),
-                    );
-                } else {
-                    let param_names: Vec<String> =
-                        self.workspace.parameters.keys().cloned().collect();
-                    let mut remove_param: Option<String> = None;
-
-                    for name in param_names {
-                        let mut val = self
-                            .workspace
-                            .parameters
-                            .get(&name)
-                            .copied()
-                            .unwrap_or(1.0_f64);
-                        let mut spec = self
-                            .workspace
-                            .slider_specs
-                            .get(&name)
-                            .cloned()
-                            .unwrap_or_else(|| SliderSpec::for_parameter(&name, val));
-
-                        egui::Frame::group(ui.style())
-                            .fill(pal.card_bg)
-                            .stroke(Stroke::new(1.0_f32, pal.border))
-                            .rounding(Rounding::same(5.0_f32))
-                            .inner_margin(Margin::symmetric(6.0_f32, 4.0_f32))
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        RichText::new(Self::format_symbolic_math(&name))
-                                            .font(FontId::monospace(13.0_f32))
-                                            .strong()
-                                            .color(pal.accent_blue),
-                                    );
-                                    ui.label("=");
-                                    if ui
-                                        .add(
-                                            egui::DragValue::new(&mut val)
-                                                .speed(spec.step.max(1e-4_f64)),
-                                        )
-                                        .changed()
-                                    {
-                                        self.workspace.parameters.insert(name.clone(), val);
-                                        self.workspace
-                                            .r_objects
-                                            .insert(name.clone(), RObject::scalar(val));
-                                    }
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            if ui
-                                                .small_button(
-                                                    RichText::new("×").color(pal.accent_red),
-                                                )
-                                                .clicked()
-                                            {
-                                                remove_param = Some(name.clone());
-                                            }
-                                            if ui
-                                                .small_button(format!(
-                                                    "[{:.1} .. {:.1}]",
-                                                    spec.min, spec.max
-                                                ))
-                                                .on_hover_text(
-                                                    "Edit slider min, max, and step limits",
-                                                )
-                                                .clicked()
-                                            {
-                                                spec.edit_bounds_open = !spec.edit_bounds_open;
-                                            }
-                                        },
-                                    );
-                                });
-
-                                let safe_min = spec.min.min(spec.max - 1e-6_f64);
-                                let safe_max = spec.max.max(safe_min + 1e-6_f64);
-                                let mut slider_control =
-                                    egui::Slider::new(&mut val, safe_min..=safe_max)
-                                        .show_value(false);
-                                if spec.step > 0.0_f64 {
-                                    slider_control = slider_control.step_by(spec.step);
-                                }
-                                if ui.add(slider_control).changed() {
-                                    self.workspace.parameters.insert(name.clone(), val);
-                                    self.workspace
-                                        .r_objects
-                                        .insert(name.clone(), RObject::scalar(val));
+                                    self.workspace.slider_specs.insert(name, spec);
+                                    ui.add_space(4.0_f32);
                                 }
 
-                                if spec.edit_bounds_open {
-                                    ui.horizontal(|ui| {
-                                        ui.add(
-                                            egui::DragValue::new(&mut spec.min)
-                                                .speed(0.1_f64)
-                                                .prefix("Min: "),
-                                        );
-                                        ui.add(
-                                            egui::DragValue::new(&mut spec.max)
-                                                .speed(0.1_f64)
-                                                .prefix("Max: "),
-                                        );
-                                        ui.add(
-                                            egui::DragValue::new(&mut spec.step)
-                                                .speed(0.01_f64)
-                                                .prefix("Step: "),
-                                        );
-                                        if spec.step < 0.0_f64 {
-                                            spec.step = 0.0_f64;
-                                        }
-                                    });
+                                if let Some(p) = remove_param {
+                                    self.workspace.parameters.remove(&p);
+                                    self.workspace.slider_specs.remove(&p);
+                                    self.workspace.r_objects.remove(&p);
                                 }
-                            });
+                            }
 
-                        self.workspace.slider_specs.insert(name, spec);
-                        ui.add_space(2.0_f32);
-                    }
-
-                    if let Some(p) = remove_param {
-                        self.workspace.parameters.remove(&p);
-                        self.workspace.slider_specs.remove(&p);
-                        self.workspace.r_objects.remove(&p);
-                    }
-                }
-
-                if self.enable_equilibrium_solver {
-                    if let Some((x_star, y_star, lambda_star, indirect_u)) =
-                        self.solve_structural_equilibrium_opt()
-                    {
-                        ui.add_space(6.0_f32);
-                        egui::Frame::group(ui.style())
-                            .fill(pal.card_bg)
-                            .stroke(Stroke::new(1.0_f32, pal.accent_green))
-                            .rounding(Rounding::same(6.0_f32))
-                            .inner_margin(Margin::same(6.0_f32))
-                            .show(ui, |ui| {
-                                ui.label(
-                                    RichText::new("Solved Equilibrium / Intersection")
-                                        .strong()
-                                        .color(pal.accent_green),
+                            // Compact `+ Add Slider` row
+                            ui.horizontal(|ui| {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_param_name_input)
+                                        .font(FontId::monospace(11.6_f32))
+                                        .desired_width(52.0_f32)
+                                        .hint_text("alpha"),
                                 );
-                                ui.monospace(format!("x* = {:.4}  |  y* = {:.4}", x_star, y_star));
-                                ui.monospace(format!(
-                                    "λ* = {:.4}  |  V* = {:.4}",
-                                    lambda_star, indirect_u
-                                ));
+                                ui.label("=");
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut self.new_param_val_input)
+                                        .font(FontId::monospace(11.6_f32))
+                                        .desired_width((ui.available_width() - 80.0_f32).max(52.0_f32))
+                                        .hint_text("1.0"),
+                                );
+                                if ui.add(pill_button("+ Slider", false, pal)).clicked() {
+                                    let name =
+                                        Self::normalize_ident_name(&self.new_param_name_input);
+                                    if let Ok(val) =
+                                        self.eval_parameter_rhs(&self.new_param_val_input)
+                                    {
+                                        if !name.is_empty() && val.is_finite() {
+                                            self.workspace.set_parameter(name, val);
+                                        }
+                                    }
+                                }
                             });
-                    }
-                }
+                        }
+
+                        if self.enable_equilibrium_solver {
+                            if let Some((x_star, y_star, lambda_star, indirect_u)) =
+                                self.solve_structural_equilibrium_opt()
+                            {
+                                ui.add_space(6.0_f32);
+                                capsule_frame(pal, pal.accent_green).show(ui, |ui| {
+                                    ui.label(
+                                        RichText::new("Solved Equilibrium / Intersection")
+                                            .strong()
+                                            .color(pal.accent_green),
+                                    );
+                                    ui.monospace(format!(
+                                        "x* = {:.4}  |  y* = {:.4}",
+                                        x_star, y_star
+                                    ));
+                                    ui.monospace(format!(
+                                        "λ* = {:.4}  |  V* = {:.4}",
+                                        lambda_star, indirect_u
+                                    ));
+                                });
+                            }
+                        }
+                    });
             });
     }
 
-    fn render_r_objects_tab(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("R Environment Objects")
-                    .font(FontId::proportional(14.0_f32))
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("rm(list=ls())").clicked() {
-                    self.workspace.r_objects.clear();
-                }
-            });
-        });
-        ui.label(
-            RichText::new(
-                "Supports `data.frame()`, `matrix()`, `list()`, `function()`, `lm(y ~ x, data = df)`, `|>`.",
-            )
-            .font(FontId::proportional(11.5_f32))
-            .color(pal.text_muted),
+    fn render_left_bottom_card(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        let header_act = render_card_tab_header(
+            ui,
+            pal,
+            &mut self.left_bottom_tab,
+            &[
+                (LeftBottomTab::Files, "Files"),
+                (LeftBottomTab::Models, "Models"),
+                (LeftBottomTab::ReportFormat, "Format"),
+            ],
+            self.left_bottom_collapsed,
+            true,
+            true,
+            "Collapse Files & Models Card",
+            "Toggle Expanded Files Card",
         );
-        ui.separator();
 
-        egui::ScrollArea::vertical()
-            .id_source("r_objects_scroll")
-            .show(ui, |ui| {
-                let keys: Vec<String> = self.workspace.r_objects.keys().cloned().collect();
-                let mut remove_obj: Option<String> = None;
-                let mut run_console_cmd: Option<String> = None;
+        if header_act.minimize_clicked {
+            self.left_bottom_collapsed = !self.left_bottom_collapsed;
+        }
+        if header_act.popout_clicked {
+            self.symbolic_card_collapsed = !self.symbolic_card_collapsed;
+            self.left_bottom_collapsed = false;
+        }
+        if self.left_bottom_collapsed {
+            return;
+        }
 
-                for k in keys {
-                    let Some(obj) = self.workspace.r_objects.get(&k).cloned() else {
-                        continue;
-                    };
-                    egui::Frame::group(ui.style())
-                        .fill(pal.card_bg)
-                        .stroke(Stroke::new(1.0_f32, pal.border))
-                        .rounding(Rounding::same(5.0_f32))
-                        .inner_margin(Margin::same(6.0_f32))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(&k)
-                                        .font(FontId::monospace(13.0_f32))
+        match self.left_bottom_tab {
+            LeftBottomTab::Files => self.render_project_files_tab(ui, pal),
+            LeftBottomTab::Models => self.render_models_library_tab(ui, pal),
+            LeftBottomTab::ReportFormat => {
+                egui::Frame::none()
+                    .inner_margin(Margin::same(8.0_f32))
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Literate Export Format")
+                                .strong()
+                                .color(pal.accent_blue),
+                        );
+                        ui.add_space(4.0_f32);
+                        for fmt in [
+                            ReportFormat::QuartoQmd,
+                            ReportFormat::RMarkdownRmd,
+                            ReportFormat::MarkdownMd,
+                        ] {
+                            ui.selectable_value(&mut self.report_format, fmt, fmt.label());
+                        }
+                        ui.add_space(8.0_f32);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("🚀 Export Bundle & Open Positron")
                                         .strong()
-                                        .color(pal.accent_blue),
-                                );
-                                ui.label(
-                                    RichText::new(obj.type_summary())
-                                        .font(FontId::monospace(10.8_f32))
-                                        .color(pal.text_muted),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui
-                                            .small_button(RichText::new("×").color(pal.accent_red))
-                                            .clicked()
-                                        {
-                                            remove_obj = Some(k.clone());
-                                        }
-                                        if matches!(&obj, RObject::Numeric(v) if v.len() >= 2)
-                                            && ui.small_button("📈 Plot").clicked()
-                                        {
-                                            run_console_cmd = Some(format!("plot({})", k));
-                                        }
-                                        if obj.is_lm_model() {
-                                            if ui.small_button("📈 Fit").clicked() {
-                                                run_console_cmd =
-                                                    Some(format!("plot(fitted({}))", k));
-                                            }
-                                            if ui.small_button("Summary").clicked() {
-                                                run_console_cmd =
-                                                    Some(format!("summary({})", k));
-                                            }
-                                        }
-                                    },
-                                );
-                            });
+                                        .color(pal.accent_green),
+                                )
+                                .fill(pal.pill_bg)
+                                .stroke(Stroke::new(1.0_f32, pal.border))
+                                .rounding(Rounding::same(6.0_f32)),
+                            )
+                            .clicked()
+                        {
+                            self.trigger_export_pipeline();
+                        }
+                    });
+            }
+        }
+    }
 
-                            match &obj {
-                                RObject::DataFrame { columns, row_count } => {
-                                    egui::CollapsingHeader::new(
-                                        RichText::new(format!(
-                                            "Inspect {} columns ({} rows)",
-                                            columns.len(),
-                                            row_count
-                                        ))
-                                        .font(FontId::proportional(11.5_f32))
-                                        .color(pal.text_secondary),
-                                    )
-                                    .id_source(format!("r_df_inspect_{}", k))
+    fn render_environment_body(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new("Variables")
+                            .font(FontId::proportional(12.2_f32))
+                            .strong()
+                            .color(pal.text_secondary),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(
+                            RichText::new(format!("{} obj", self.workspace.r_objects.len()))
+                                .font(FontId::monospace(10.8_f32))
+                                .color(pal.text_muted),
+                        );
+                    });
+                });
+                ui.add_space(3.0_f32);
+
+                egui::ScrollArea::vertical()
+                    .id_source("r_objects_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let keys: Vec<String> = self.workspace.r_objects.keys().cloned().collect();
+                        if keys.is_empty() {
+                            ui.label(
+                                RichText::new("Environment is empty.")
+                                    .italics()
+                                    .color(pal.text_muted),
+                            );
+                            return;
+                        }
+
+                        let mut remove_obj: Option<String> = None;
+                        let mut run_console_cmd: Option<String> = None;
+
+                        for k in keys {
+                            let Some(obj) = self.workspace.r_objects.get(&k).cloned() else {
+                                continue;
+                            };
+
+                            // Clean one-line row for scalar numeric parameters (like `A = 50`, `α = 0.45`)
+                            if let Some(scalar_val) = obj.as_scalar_f64() {
+                                egui::Frame::none()
+                                    .fill(pal.sub_card_bg.gamma_multiply(0.75_f32))
+                                    .stroke(Stroke::new(1.0_f32, pal.border.gamma_multiply(0.6_f32)))
+                                    .rounding(Rounding::same(6.0_f32))
+                                    .inner_margin(Margin::symmetric(8.0_f32, 4.0_f32))
                                     .show(ui, |ui| {
-                                        let col_names: Vec<String> =
-                                            columns.keys().cloned().collect();
-                                        if col_names.len() >= 2
-                                            && ui
-                                                .small_button(format!(
-                                                    "📈 Plot {}${} vs {}${}",
-                                                    k, col_names[0], k, col_names[1]
-                                                ))
-                                                .clicked()
-                                        {
-                                            run_console_cmd = Some(format!(
-                                                "plot({}${}, {}${})",
-                                                k, col_names[0], k, col_names[1]
-                                            ));
-                                        }
-                                        for (col_name, col_val) in columns {
-                                            ui.horizontal_wrapped(|ui| {
-                                                ui.monospace(
-                                                    RichText::new(format!("${}", col_name))
-                                                        .strong()
-                                                        .color(pal.accent_green),
-                                                );
-                                                ui.monospace(
-                                                    RichText::new(col_val.type_summary())
-                                                        .color(pal.text_muted),
-                                                );
-                                                if ui.small_button("📈").clicked() {
-                                                    run_console_cmd = Some(format!(
-                                                        "plot({}${})",
-                                                        k, col_name
-                                                    ));
-                                                }
-                                            });
-                                            ui.monospace(
-                                                RichText::new(format!(
-                                                    "  {}",
-                                                    col_val.preview_string()
-                                                ))
-                                                .font(FontId::monospace(11.0_f32))
-                                                .color(pal.text_primary),
+                                        ui.horizontal(|ui| {
+                                            ui.label(
+                                                RichText::new(Self::format_symbolic_math(&k))
+                                                    .font(FontId::monospace(12.2_f32))
+                                                    .strong()
+                                                    .color(pal.text_primary),
                                             );
-                                        }
+                                            ui.label(
+                                                RichText::new("=")
+                                                    .font(FontId::monospace(12.0_f32))
+                                                    .color(pal.text_muted),
+                                            );
+                                            let val_fmt = if scalar_val.fract().abs() < 1e-9_f64
+                                                && scalar_val.abs() < 1e9_f64
+                                            {
+                                                format!("{}", scalar_val.round() as i64)
+                                            } else {
+                                                let s = format!("{:.4}", scalar_val);
+                                                s.trim_end_matches('0')
+                                                    .trim_end_matches('.')
+                                                    .to_string()
+                                            };
+                                            ui.label(
+                                                RichText::new(val_fmt)
+                                                    .font(FontId::monospace(12.2_f32))
+                                                    .color(pal.accent_blue),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui
+                                                        .add(header_icon_button(
+                                                            "×",
+                                                            pal.text_muted,
+                                                        ))
+                                                        .on_hover_text("Remove variable")
+                                                        .clicked()
+                                                    {
+                                                        remove_obj = Some(k.clone());
+                                                    }
+                                                },
+                                            );
+                                        });
                                     });
-                                }
-                                RObject::Matrix { nrow, ncol, .. } => {
-                                    egui::CollapsingHeader::new(
-                                        RichText::new(format!("Matrix Grid [{} × {}]", nrow, ncol))
-                                            .font(FontId::proportional(11.5_f32))
+                                ui.add_space(3.0_f32);
+                                continue;
+                            }
+
+                            // Rich expandable cards for structured R objects (DataFrame, Matrix, List, lm, Vector, Closure)
+                            capsule_frame(pal, pal.border).show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(&k)
+                                            .font(FontId::monospace(12.5_f32))
+                                            .strong()
+                                            .color(pal.accent_blue),
+                                    );
+                                    ui.label(
+                                        RichText::new(obj.type_summary())
+                                            .font(FontId::monospace(10.5_f32))
+                                            .color(pal.text_muted),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.x = 3.0_f32;
+                                            if ui
+                                                .add(header_icon_button("×", pal.accent_red))
+                                                .clicked()
+                                            {
+                                                remove_obj = Some(k.clone());
+                                            }
+                                            if matches!(&obj, RObject::Numeric(v) if v.len() >= 2)
+                                                && ui
+                                                    .add(header_icon_button("📈", pal.accent_green))
+                                                    .on_hover_text("Plot vector on 2D Graph")
+                                                    .clicked()
+                                            {
+                                                run_console_cmd = Some(format!("plot({})", k));
+                                            }
+                                            if obj.is_lm_model() {
+                                                if ui
+                                                    .add(header_icon_button("📈", pal.accent_green))
+                                                    .on_hover_text("Plot fitted values")
+                                                    .clicked()
+                                                {
+                                                    run_console_cmd =
+                                                        Some(format!("plot(fitted({}))", k));
+                                                }
+                                                if ui
+                                                    .add(header_icon_button("Σ", pal.accent_purple))
+                                                    .on_hover_text("Print summary(fit) to Console")
+                                                    .clicked()
+                                                {
+                                                    run_console_cmd =
+                                                        Some(format!("summary({})", k));
+                                                }
+                                            }
+                                        },
+                                    );
+                                });
+
+                                match &obj {
+                                    RObject::DataFrame { columns, row_count } => {
+                                        egui::CollapsingHeader::new(
+                                            RichText::new(format!(
+                                                "{} cols × {} rows",
+                                                columns.len(),
+                                                row_count
+                                            ))
+                                            .font(FontId::proportional(11.2_f32))
                                             .color(pal.text_secondary),
-                                    )
-                                    .id_source(format!("r_mat_inspect_{}", k))
-                                    .show(ui, |ui| {
+                                        )
+                                        .id_source(format!("r_df_inspect_{}", k))
+                                        .show(ui, |ui| {
+                                            let col_names: Vec<String> =
+                                                columns.keys().cloned().collect();
+                                            if col_names.len() >= 2
+                                                && ui
+                                                    .small_button(format!(
+                                                        "📈 Plot {}${} vs {}${}",
+                                                        k, col_names[0], k, col_names[1]
+                                                    ))
+                                                    .clicked()
+                                            {
+                                                run_console_cmd = Some(format!(
+                                                    "plot({}${}, {}${})",
+                                                    k, col_names[0], k, col_names[1]
+                                                ));
+                                            }
+                                            for (col_name, col_val) in columns {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.monospace(
+                                                        RichText::new(format!("${}", col_name))
+                                                            .strong()
+                                                            .color(pal.accent_green),
+                                                    );
+                                                    ui.monospace(
+                                                        RichText::new(col_val.type_summary())
+                                                            .color(pal.text_muted),
+                                                    );
+                                                    if ui.small_button("📈").clicked() {
+                                                        run_console_cmd = Some(format!(
+                                                            "plot({}${})",
+                                                            k, col_name
+                                                        ));
+                                                    }
+                                                });
+                                                ui.monospace(
+                                                    RichText::new(format!(
+                                                        "  {}",
+                                                        col_val.preview_string()
+                                                    ))
+                                                    .font(FontId::monospace(10.8_f32))
+                                                    .color(pal.text_primary),
+                                                );
+                                            }
+                                        });
+                                    }
+                                    RObject::Matrix { nrow, ncol, .. } => {
+                                        egui::CollapsingHeader::new(
+                                            RichText::new(format!(
+                                                "Matrix Grid [{} × {}]",
+                                                nrow, ncol
+                                            ))
+                                            .font(FontId::proportional(11.2_f32))
+                                            .color(pal.text_secondary),
+                                        )
+                                        .id_source(format!("r_mat_inspect_{}", k))
+                                        .show(ui, |ui| {
+                                            ui.monospace(
+                                                RichText::new(obj.preview_string())
+                                                    .font(FontId::monospace(10.8_f32))
+                                                    .color(pal.text_primary),
+                                            );
+                                        });
+                                    }
+                                    RObject::List(map) => {
+                                        let hdr = if obj.is_lm_model() {
+                                            format!("lm() Model Fields ({})", map.len())
+                                        } else {
+                                            format!("List Fields ({})", map.len())
+                                        };
+                                        egui::CollapsingHeader::new(
+                                            RichText::new(hdr)
+                                                .font(FontId::proportional(11.2_f32))
+                                                .color(pal.text_secondary),
+                                        )
+                                        .id_source(format!("r_list_inspect_{}", k))
+                                        .show(ui, |ui| {
+                                            for (field, fval) in map {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.monospace(
+                                                        RichText::new(format!("${}", field))
+                                                            .strong()
+                                                            .color(pal.accent_purple),
+                                                    );
+                                                    ui.monospace(
+                                                        RichText::new(fval.preview_string())
+                                                            .font(FontId::monospace(10.8_f32))
+                                                            .color(pal.text_primary),
+                                                    );
+                                                });
+                                            }
+                                        });
+                                    }
+                                    RObject::Closure { .. } => {
+                                        ui.monospace(
+                                            RichText::new(
+                                                obj.closure_signature()
+                                                    .unwrap_or_else(|| "function()".to_string()),
+                                            )
+                                            .font(FontId::monospace(11.2_f32))
+                                            .color(pal.accent_amber),
+                                        );
+                                    }
+                                    _ => {
                                         ui.monospace(
                                             RichText::new(obj.preview_string())
-                                                .font(FontId::monospace(11.0_f32))
+                                                .font(FontId::monospace(11.2_f32))
                                                 .color(pal.text_primary),
                                         );
-                                    });
+                                    }
                                 }
-                                RObject::List(map) => {
-                                    let hdr = if obj.is_lm_model() {
-                                        format!("lm() Model Fields ({})", map.len())
-                                    } else {
-                                        format!("List Fields ({})", map.len())
-                                    };
-                                    egui::CollapsingHeader::new(
-                                        RichText::new(hdr)
-                                            .font(FontId::proportional(11.5_f32))
-                                            .color(pal.text_secondary),
-                                    )
-                                    .id_source(format!("r_list_inspect_{}", k))
-                                    .show(ui, |ui| {
-                                        for (field, fval) in map {
-                                            ui.horizontal_wrapped(|ui| {
-                                                ui.monospace(
-                                                    RichText::new(format!("${}", field))
-                                                        .strong()
-                                                        .color(pal.accent_purple),
-                                                );
-                                                ui.monospace(
-                                                    RichText::new(fval.preview_string())
-                                                        .font(FontId::monospace(11.0_f32))
-                                                        .color(pal.text_primary),
-                                                );
-                                            });
-                                        }
-                                    });
-                                }
-                                RObject::Closure { .. } => {
-                                    ui.monospace(
-                                        RichText::new(
-                                            obj.closure_signature()
-                                                .unwrap_or_else(|| "function()".to_string()),
-                                        )
-                                        .color(pal.accent_amber),
-                                    );
-                                }
-                                _ => {
-                                    ui.monospace(
-                                        RichText::new(obj.preview_string())
-                                            .font(FontId::monospace(11.5_f32))
-                                            .color(pal.text_primary),
-                                    );
-                                }
-                            }
-                        });
-                    ui.add_space(3.0_f32);
-                }
+                            });
+                            ui.add_space(4.0_f32);
+                        }
 
-                if let Some(k) = remove_obj {
-                    self.workspace.r_objects.remove(&k);
-                    self.workspace.parameters.remove(&k);
-                }
-                if let Some(cmd) = run_console_cmd {
-                    self.execute_console_command(&cmd);
-                }
+                        if let Some(k) = remove_obj {
+                            self.workspace.r_objects.remove(&k);
+                            self.workspace.parameters.remove(&k);
+                            self.workspace.slider_specs.remove(&k);
+                        }
+                        if let Some(cmd) = run_console_cmd {
+                            self.execute_console_command(&cmd);
+                        }
+                    });
             });
     }
 
     fn render_models_library_tab(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.label(
-            RichText::new("Model & Formula Library")
-                .font(FontId::proportional(14.5_f32))
-                .strong()
-                .color(pal.accent_blue),
-        );
-        ui.label(
-            RichText::new(
-                "Select a preset template to load its formulas, parameters, and optimal domain.",
-            )
-            .font(FontId::proportional(11.5_f32))
-            .color(pal.text_muted),
-        );
-        ui.separator();
-
-        egui::ScrollArea::vertical()
-            .id_source("models_library_scroll")
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
             .show(ui, |ui| {
-                for snip in SnippetTemplate::all() {
-                    egui::Frame::group(ui.style())
-                        .fill(pal.card_bg)
-                        .stroke(Stroke::new(1.0_f32, pal.border))
-                        .rounding(Rounding::same(6.0_f32))
-                        .inner_margin(Margin::same(8.0_f32))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    RichText::new(snip.label())
-                                        .font(FontId::proportional(13.5_f32))
-                                        .strong()
-                                        .color(pal.text_primary),
-                                );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui
-                                            .button(
-                                                RichText::new("Load Model")
-                                                    .strong()
-                                                    .color(pal.accent_green),
-                                            )
-                                            .clicked()
-                                        {
-                                            self.selected_snippet = snip;
-                                            self.active_model = snip.model_kind();
-                                            self.editor_script = snip.script_text().to_string();
-                                            let (x0, x1, y0, y1) = snip.default_domains();
-                                            self.home_x_min = x0;
-                                            self.home_x_max = x1;
-                                            self.home_y_min = y0;
-                                            self.home_y_max = y1;
-                                            self.reset_graph_to_home();
-                                            self.workspace.parameters.clear();
-                                            self.workspace.slider_specs.clear();
-                                            self.workspace.functions.clear();
-                                            self.workspace.function_styles.clear();
-                                            self.evaluate_editor_script();
-                                            if snip == SnippetTemplate::SaddleSurface3D {
-                                                self.viewport_mode = ViewportMode::Surface3D;
-                                            } else {
-                                                self.viewport_mode = ViewportMode::Plot2D;
+                egui::ScrollArea::vertical()
+                    .id_source("models_library_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for snip in SnippetTemplate::all() {
+                            let is_active = self.selected_snippet == snip;
+                            capsule_frame(
+                                pal,
+                                if is_active {
+                                    pal.accent_blue
+                                } else {
+                                    pal.border
+                                },
+                            )
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        RichText::new(snip.label())
+                                            .font(FontId::proportional(12.2_f32))
+                                            .strong()
+                                            .color(pal.text_primary),
+                                    );
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui
+                                                .add(
+                                                    egui::Button::new(
+                                                        RichText::new("Load")
+                                                            .font(FontId::proportional(11.2_f32))
+                                                            .strong()
+                                                            .color(pal.accent_green),
+                                                    )
+                                                    .fill(pal.pill_bg)
+                                                    .stroke(Stroke::new(1.0_f32, pal.border))
+                                                    .rounding(Rounding::same(5.0_f32)),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.load_snippet_template(snip);
                                             }
-                                        }
-                                    },
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(snip.description())
+                                        .font(FontId::proportional(11.2_f32))
+                                        .color(pal.text_secondary),
                                 );
                             });
-                            ui.add_space(2.0_f32);
-                            ui.label(
-                                RichText::new(snip.description())
-                                    .font(FontId::proportional(12.0_f32))
-                                    .color(pal.text_secondary),
-                            );
-                        });
-                    ui.add_space(6.0_f32);
-                }
+                            ui.add_space(4.0_f32);
+                        }
+                    });
             });
     }
 
     fn render_project_files_tab(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Project Explorer")
-                    .font(FontId::proportional(14.0_f32))
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("🔄 Refresh").clicked() {
+        render_card_sub_toolbar(ui, pal, |ui| {
+            if ui
+                .add(header_icon_button("←", pal.text_secondary))
+                .on_hover_text("Parent directory")
+                .clicked()
+            {
+                if let Some(parent) = self.project_dir.parent() {
+                    self.project_dir = parent.to_path_buf();
                     self.refresh_project_files();
                 }
-                if ui.small_button("⬆ Up").clicked() {
-                    if let Some(parent) = self.project_dir.parent() {
-                        self.project_dir = parent.to_path_buf();
-                        self.refresh_project_files();
+            }
+            egui::ComboBox::from_id_source("bento_files_filter_combo")
+                .width(96.0_f32)
+                .selected_text(
+                    RichText::new(self.file_filter.label())
+                        .font(FontId::proportional(11.5_f32))
+                        .color(pal.text_primary),
+                )
+                .show_ui(ui, |ui| {
+                    for f in [
+                        FileFilterKind::All,
+                        FileFilterKind::Scripts,
+                        FileFilterKind::Data,
+                        FileFilterKind::Notes,
+                    ] {
+                        ui.selectable_value(&mut self.file_filter, f, f.label());
                     }
+                });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add(header_icon_button("🔄", pal.text_secondary))
+                    .on_hover_text("Refresh directory listing")
+                    .clicked()
+                {
+                    self.refresh_project_files();
                 }
             });
         });
 
-        ui.monospace(
-            RichText::new(format!("{}", self.project_dir.display()))
-                .font(FontId::monospace(11.0_f32))
-                .color(pal.text_muted),
-        );
-        ui.separator();
-
-        egui::ScrollArea::vertical()
-            .id_source("project_files_scroll")
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 4.0_f32))
             .show(ui, |ui| {
-                let entries = self.project_files.clone();
-                for entry in entries {
-                    ui.horizontal(|ui| {
-                        let icon = if entry.is_dir { "📁" } else { "📄" };
-                        if ui
-                            .selectable_label(false, format!("{} {}", icon, entry.name))
-                            .clicked()
-                        {
-                            if entry.is_dir {
-                                self.project_dir = entry.path;
-                                self.refresh_project_files();
-                            } else {
-                                self.open_project_file(&entry.path);
+                ui.monospace(
+                    RichText::new(format!("{}", self.project_dir.display()))
+                        .font(FontId::monospace(10.5_f32))
+                        .color(pal.text_muted),
+                );
+                ui.add_space(3.0_f32);
+
+                egui::ScrollArea::vertical()
+                    .id_source("project_files_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let entries = self.project_files.clone();
+                        for entry in entries {
+                            if !self.file_filter.matches(&entry.name, entry.is_dir) {
+                                continue;
                             }
-                        }
-                        if !entry.is_dir {
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.label(
-                                        RichText::new(format!("{} B", entry.size_bytes))
-                                            .font(FontId::monospace(10.5_f32))
-                                            .color(pal.text_muted),
+                            ui.horizontal(|ui| {
+                                let icon = if entry.is_dir { "📁" } else { "📄" };
+                                if ui
+                                    .selectable_label(
+                                        false,
+                                        RichText::new(format!("{} {}", icon, entry.name))
+                                            .font(FontId::proportional(12.0_f32))
+                                            .color(if entry.is_dir {
+                                                pal.accent_blue
+                                            } else {
+                                                pal.text_primary
+                                            }),
+                                    )
+                                    .clicked()
+                                {
+                                    if entry.is_dir {
+                                        self.project_dir = entry.path;
+                                        self.refresh_project_files();
+                                    } else {
+                                        self.open_project_file(&entry.path);
+                                    }
+                                }
+                                if !entry.is_dir {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.label(
+                                                RichText::new(format!("{} B", entry.size_bytes))
+                                                    .font(FontId::monospace(10.2_f32))
+                                                    .color(pal.text_muted),
+                                            );
+                                        },
                                     );
-                                },
-                            );
+                                }
+                            });
                         }
                     });
-                }
             });
     }
 
@@ -3517,127 +4176,226 @@ print(p_main)
     }
 
     // =========================================================================
-    // CENTER VIEWPORT: GRAPH TOOLBAR, 2D DESMOS PLOT & 3D SURFACE
+    // CARD 3 — CENTER TOP: GRAPH VIEWPORT (2D DESMOS GLOW PLOT & 3D SURFACE)
     // =========================================================================
 
     fn render_center_viewport(&mut self, ui: &mut Ui) {
         let pal = self.palette();
+        render_bento_card_frame(ui, pal, None, |ui| {
+            // Card 3 Internal Top Bar
+            let header_resp = egui::Frame::none()
+                .fill(pal.card_header_bg)
+                .rounding(Rounding {
+                    nw: 8.0_f32,
+                    ne: 8.0_f32,
+                    sw: 0.0_f32,
+                    se: 0.0_f32,
+                })
+                .inner_margin(Margin::symmetric(8.0_f32, 5.0_f32))
+                .show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 5.0_f32;
 
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut self.viewport_mode,
-                ViewportMode::Plot2D,
-                RichText::new("📈 2D Graph").strong(),
+                        // Left: Mode selector pill + `+` quick action
+                        let mode_pill = match self.viewport_mode {
+                            ViewportMode::Plot2D => "📈 2D Graph ⌄",
+                            ViewportMode::Surface3D => "🧊 3D Surface ⌄",
+                        };
+                        ui.menu_button(
+                            RichText::new(mode_pill)
+                                .font(FontId::proportional(12.2_f32))
+                                .strong()
+                                .color(pal.accent_red),
+                            |ui| {
+                                if ui
+                                    .selectable_label(
+                                        self.viewport_mode == ViewportMode::Plot2D,
+                                        "📈 2D Symbolic Graph",
+                                    )
+                                    .clicked()
+                                {
+                                    self.viewport_mode = ViewportMode::Plot2D;
+                                    ui.close_menu();
+                                }
+                                if ui
+                                    .selectable_label(
+                                        self.viewport_mode == ViewportMode::Surface3D,
+                                        "🧊 3D Isometric Surface",
+                                    )
+                                    .clicked()
+                                {
+                                    self.viewport_mode = ViewportMode::Surface3D;
+                                    ui.close_menu();
+                                }
+                            },
+                        );
+
+                        if ui
+                            .add(pill_button("+", false, pal))
+                            .on_hover_text("Zoom in (or click Symbolic to add a new expression)")
+                            .clicked()
+                        {
+                            if self.viewport_mode == ViewportMode::Plot2D {
+                                self.pending_zoom_factor = Some([1.25_f32, 1.25_f32]);
+                            } else {
+                                self.surface_zoom = (self.surface_zoom * 1.15_f32).clamp(0.3, 2.5);
+                            }
+                        }
+
+                        if ui
+                            .add(pill_button("🏠", false, pal))
+                            .on_hover_text(format!(
+                                "Restore Home View: X[{:.1}, {:.1}], Y[{:.1}, {:.1}]",
+                                self.home_x_min, self.home_x_max, self.home_y_min, self.home_y_max
+                            ))
+                            .clicked()
+                        {
+                            self.reset_graph_to_home();
+                        }
+
+                        if self.viewport_mode == ViewportMode::Plot2D {
+                            for mode in [
+                                AxisZoomMode::BothXY,
+                                AxisZoomMode::XOnly,
+                                AxisZoomMode::YOnly,
+                            ] {
+                                let selected = self.axis_zoom_mode == mode;
+                                if ui
+                                    .add(pill_button(mode.label(), selected, pal))
+                                    .on_hover_text("Scroll-zoom axis lock")
+                                    .clicked()
+                                {
+                                    self.axis_zoom_mode = mode;
+                                }
+                            }
+
+                            if ui
+                                .add(header_icon_button("X+", pal.text_secondary))
+                                .on_hover_text("Zoom in X-axis")
+                                .clicked()
+                            {
+                                self.pending_zoom_factor = Some([1.25_f32, 1.0_f32]);
+                            }
+                            if ui
+                                .add(header_icon_button("X-", pal.text_secondary))
+                                .on_hover_text("Zoom out X-axis")
+                                .clicked()
+                            {
+                                self.pending_zoom_factor = Some([0.8_f32, 1.0_f32]);
+                            }
+                            if ui
+                                .add(header_icon_button("Y+", pal.text_secondary))
+                                .on_hover_text("Zoom in Y-axis")
+                                .clicked()
+                            {
+                                self.pending_zoom_factor = Some([1.0_f32, 1.25_f32]);
+                            }
+                            if ui
+                                .add(header_icon_button("Y-", pal.text_secondary))
+                                .on_hover_text("Zoom out Y-axis")
+                                .clicked()
+                            {
+                                self.pending_zoom_factor = Some([1.0_f32, 0.8_f32]);
+                            }
+
+                            let mut bounds_edited = false;
+                            let drag_box = Vec2::new(46.0_f32, 19.0_f32);
+                            ui.label(
+                                RichText::new("X:")
+                                    .font(FontId::monospace(11.2_f32))
+                                    .strong()
+                                    .color(pal.accent_blue),
+                            );
+                            bounds_edited |= ui
+                                .add_sized(
+                                    drag_box,
+                                    egui::DragValue::new(&mut self.domain_min).speed(0.2_f64),
+                                )
+                                .changed();
+                            ui.label(RichText::new("..").color(pal.text_muted));
+                            bounds_edited |= ui
+                                .add_sized(
+                                    drag_box,
+                                    egui::DragValue::new(&mut self.domain_max).speed(0.2_f64),
+                                )
+                                .changed();
+
+                            ui.label(
+                                RichText::new("Y:")
+                                    .font(FontId::monospace(11.2_f32))
+                                    .strong()
+                                    .color(pal.accent_purple),
+                            );
+                            bounds_edited |= ui
+                                .add_sized(
+                                    drag_box,
+                                    egui::DragValue::new(&mut self.domain_y_min).speed(0.2_f64),
+                                )
+                                .changed();
+                            ui.label(RichText::new("..").color(pal.text_muted));
+                            bounds_edited |= ui
+                                .add_sized(
+                                    drag_box,
+                                    egui::DragValue::new(&mut self.domain_y_max).speed(0.2_f64),
+                                )
+                                .changed();
+
+                            if bounds_edited {
+                                if self.domain_max <= self.domain_min + 1e-3_f64 {
+                                    self.domain_max = self.domain_min + 1.0_f64;
+                                }
+                                if self.domain_y_max <= self.domain_y_min + 1e-3_f64 {
+                                    self.domain_y_max = self.domain_y_min + 1.0_f64;
+                                }
+                                self.needs_plot_bounds_sync = true;
+                            }
+                        }
+
+                        // Right: `⋮` quick overlays popover + `⛶` Maximize Graph
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0_f32;
+                            if ui
+                                .add(pill_button("⛶", self.maximize_graph, pal))
+                                .on_hover_text("Maximize / Restore Graph Viewport")
+                                .clicked()
+                            {
+                                self.maximize_graph = !self.maximize_graph;
+                            }
+                            ui.menu_button(
+                                RichText::new("⋮")
+                                    .font(FontId::proportional(14.0_f32))
+                                    .strong()
+                                    .color(pal.text_secondary),
+                                |ui| {
+                                    self.render_graph_settings_popover(ui, pal);
+                                },
+                            );
+                        });
+                    });
+                })
+                .response;
+
+            let r = header_resp.rect;
+            ui.painter().line_segment(
+                [Pos2::new(r.left(), r.bottom()), Pos2::new(r.right(), r.bottom())],
+                Stroke::new(1.0_f32, pal.border),
             );
-            ui.selectable_value(
-                &mut self.viewport_mode,
-                ViewportMode::Surface3D,
-                RichText::new("🧊 3D Surface").strong(),
-            );
-            ui.separator();
+            ui.add_space(-ui.spacing().item_spacing.y);
 
-            if ui
-                .button(RichText::new("🏠 Home").strong().color(pal.accent_green))
-                .on_hover_text(format!(
-                    "Restore Home View: X[{:.1}, {:.1}], Y[{:.1}, {:.1}]",
-                    self.home_x_min, self.home_x_max, self.home_y_min, self.home_y_max
-                ))
-                .clicked()
-            {
-                self.reset_graph_to_home();
-            }
-
-            if self.viewport_mode == ViewportMode::Plot2D {
-                ui.label(RichText::new("Zoom:").color(pal.text_secondary));
-                for mode in [
-                    AxisZoomMode::BothXY,
-                    AxisZoomMode::XOnly,
-                    AxisZoomMode::YOnly,
-                ] {
-                    ui.selectable_value(&mut self.axis_zoom_mode, mode, mode.label());
-                }
-
-                if ui
-                    .small_button("X+")
-                    .on_hover_text("Zoom in X-axis only")
-                    .clicked()
-                {
-                    self.pending_zoom_factor = Some([1.25_f32, 1.0_f32]);
-                }
-                if ui
-                    .small_button("X-")
-                    .on_hover_text("Zoom out X-axis only")
-                    .clicked()
-                {
-                    self.pending_zoom_factor = Some([0.8_f32, 1.0_f32]);
-                }
-                if ui
-                    .small_button("Y+")
-                    .on_hover_text("Zoom in Y-axis only")
-                    .clicked()
-                {
-                    self.pending_zoom_factor = Some([1.0_f32, 1.25_f32]);
-                }
-                if ui
-                    .small_button("Y-")
-                    .on_hover_text("Zoom out Y-axis only")
-                    .clicked()
-                {
-                    self.pending_zoom_factor = Some([1.0_f32, 0.8_f32]);
-                }
-
-                ui.separator();
-
-                let mut bounds_edited = false;
-                let drag_box = Vec2::new(54.0_f32, 20.0_f32);
-                ui.label(RichText::new("X:").strong().color(pal.accent_blue));
-                bounds_edited |= ui
-                    .add_sized(
-                        drag_box,
-                        egui::DragValue::new(&mut self.domain_min).speed(0.2_f64),
-                    )
-                    .changed();
-                ui.label("..");
-                bounds_edited |= ui
-                    .add_sized(
-                        drag_box,
-                        egui::DragValue::new(&mut self.domain_max).speed(0.2_f64),
-                    )
-                    .changed();
-
-                ui.label(RichText::new("Y:").strong().color(pal.accent_purple));
-                bounds_edited |= ui
-                    .add_sized(
-                        drag_box,
-                        egui::DragValue::new(&mut self.domain_y_min).speed(0.2_f64),
-                    )
-                    .changed();
-                ui.label("..");
-                bounds_edited |= ui
-                    .add_sized(
-                        drag_box,
-                        egui::DragValue::new(&mut self.domain_y_max).speed(0.2_f64),
-                    )
-                    .changed();
-
-                if bounds_edited {
-                    if self.domain_max <= self.domain_min + 1e-3_f64 {
-                        self.domain_max = self.domain_min + 1.0_f64;
-                    }
-                    if self.domain_y_max <= self.domain_y_min + 1e-3_f64 {
-                        self.domain_y_max = self.domain_y_min + 1.0_f64;
-                    }
-                    self.needs_plot_bounds_sync = true;
-                }
-            }
+            egui::Frame::none()
+                .fill(pal.plot_bg)
+                .rounding(Rounding {
+                    nw: 0.0_f32,
+                    ne: 0.0_f32,
+                    sw: 8.0_f32,
+                    se: 8.0_f32,
+                })
+                .inner_margin(Margin::same(4.0_f32))
+                .show(ui, |ui| match self.viewport_mode {
+                    ViewportMode::Plot2D => self.render_2d_desmos_plot(ui, pal),
+                    ViewportMode::Surface3D => self.render_3d_isometric_surface(ui, pal),
+                });
         });
-
-        ui.separator();
-
-        match self.viewport_mode {
-            ViewportMode::Plot2D => self.render_2d_desmos_plot(ui, pal),
-            ViewportMode::Surface3D => self.render_3d_isometric_surface(ui, pal),
-        }
     }
 
     fn render_2d_desmos_plot(&mut self, ui: &mut Ui, pal: ThemePalette) {
@@ -3676,433 +4434,457 @@ print(p_main)
         self.needs_plot_bounds_sync = false;
         let zoom_factor = self.pending_zoom_factor.take();
 
-        plot.show(ui, |plot_ui| {
-            if needs_sync {
-                plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                    [self.domain_min, self.domain_y_min],
-                    [self.domain_max, self.domain_y_max],
-                ));
-            } else {
-                let b = plot_ui.plot_bounds();
-                let [bx0, by0] = b.min();
-                let [bx1, by1] = b.max();
+        ui.scope(|ui| {
+            ui.visuals_mut().extreme_bg_color = pal.plot_bg;
+            ui.visuals_mut().widgets.noninteractive.bg_stroke =
+                Stroke::new(1.0_f32, pal.border.gamma_multiply(0.55_f32));
 
-                let scroll_delta = plot_ui.ctx().input(|i| i.smooth_scroll_delta.y);
-                let mut custom_scale: Option<[f32; 2]> = zoom_factor;
-                if scroll_delta.abs() > 0.1_f32 && (!allow_zoom_xy[0] || !allow_zoom_xy[1]) {
-                    let factor = (1.0_f32 + scroll_delta * 0.002_f32).clamp(0.7_f32, 1.4_f32);
-                    custom_scale = Some([
-                        if allow_zoom_xy[0] { factor } else { 1.0_f32 },
-                        if allow_zoom_xy[1] { factor } else { 1.0_f32 },
-                    ]);
-                }
-
-                if let Some([zx, zy]) = custom_scale {
-                    let cx = 0.5_f64 * (bx0 + bx1);
-                    let cy = 0.5_f64 * (by0 + by1);
-                    let half_w = 0.5_f64 * (bx1 - bx0) / (zx as f64);
-                    let half_h = 0.5_f64 * (by1 - by0) / (zy as f64);
+            plot.show(ui, |plot_ui| {
+                if needs_sync {
                     plot_ui.set_plot_bounds(PlotBounds::from_min_max(
-                        [cx - half_w, cy - half_h],
-                        [cx + half_w, cy + half_h],
+                        [self.domain_min, self.domain_y_min],
+                        [self.domain_max, self.domain_y_max],
                     ));
-                }
-
-                let updated = plot_ui.plot_bounds();
-                if updated.min()[0].is_finite() && updated.max()[0].is_finite() {
-                    self.domain_min = updated.min()[0];
-                    self.domain_max = updated.max()[0];
-                    self.domain_y_min = updated.min()[1];
-                    self.domain_y_max = updated.max()[1];
-                }
-            }
-
-            let vis_bounds = plot_ui.plot_bounds();
-            let (vis_min_x, vis_min_y) = (vis_bounds.min()[0], vis_bounds.min()[1]);
-            let (vis_max_x, vis_max_y) = (vis_bounds.max()[0], vis_bounds.max()[1]);
-
-            let global_sample_min =
-                if vis_min_x.is_finite() && (vis_max_x - vis_min_x) > 1e-4_f64 {
-                    vis_min_x
                 } else {
-                    self.domain_min
-                };
-            let global_sample_max =
-                if vis_max_x.is_finite() && (vis_max_x - vis_min_x) > 1e-4_f64 {
-                    vis_max_x
-                } else {
-                    self.domain_max
-                };
+                    let b = plot_ui.plot_bounds();
+                    let [bx0, by0] = b.min();
+                    let [bx1, by1] = b.max();
 
-            let ext_bridge = REngineMathBridge {
-                r_objects: &self.workspace.r_objects,
-            };
-            let eval_ctx = self.build_eval_context(&ext_bridge);
+                    let scroll_delta = plot_ui.ctx().input(|i| i.smooth_scroll_delta.y);
+                    let mut custom_scale: Option<[f32; 2]> = zoom_factor;
+                    if scroll_delta.abs() > 0.1_f32 && (!allow_zoom_xy[0] || !allow_zoom_xy[1]) {
+                        let factor =
+                            (1.0_f32 + scroll_delta * 0.002_f32).clamp(0.7_f32, 1.4_f32);
+                        custom_scale = Some([
+                            if allow_zoom_xy[0] { factor } else { 1.0_f32 },
+                            if allow_zoom_xy[1] { factor } else { 1.0_f32 },
+                        ]);
+                    }
 
-            for (idx, (sig, expr)) in self.workspace.functions.iter().enumerate() {
-                let style = self
-                    .workspace
-                    .function_styles
-                    .get(sig)
-                    .cloned()
-                    .unwrap_or_else(|| FunctionStyle::default_for_index(idx));
+                    if let Some([zx, zy]) = custom_scale {
+                        let cx = 0.5_f64 * (bx0 + bx1);
+                        let cy = 0.5_f64 * (by0 + by1);
+                        let half_w = 0.5_f64 * (bx1 - bx0) / (zx as f64);
+                        let half_h = 0.5_f64 * (by1 - by0) / (zy as f64);
+                        plot_ui.set_plot_bounds(PlotBounds::from_min_max(
+                            [cx - half_w, cy - half_h],
+                            [cx + half_w, cy + half_h],
+                        ));
+                    }
 
-                if !style.visible || style.role == FunctionPlotRole::Surface3DOnly {
-                    continue;
+                    let updated = plot_ui.plot_bounds();
+                    if updated.min()[0].is_finite() && updated.max()[0].is_finite() {
+                        self.domain_min = updated.min()[0];
+                        self.domain_max = updated.max()[0];
+                        self.domain_y_min = updated.min()[1];
+                        self.domain_y_max = updated.max()[1];
+                    }
                 }
 
-                let series_label = format!("{} = {}", Self::format_symbolic_math(sig), expr);
+                // Highlight principal x = 0 and y = 0 axes for crisp quadrant reading
+                draw_principal_axes(plot_ui, pal);
 
-                // Live R scatter/line layer when referencing R vectors, `df$col`, `(df$x, df$y)`, or `predict(fit)`
-                if let Some(r_pts) =
-                    crate::r_engine::try_extract_r_plot_series(expr, &self.workspace.r_objects)
-                {
-                    plot_ui.line(
-                        Line::new(PlotPoints::from(r_pts.clone()))
-                            .name(&series_label)
-                            .width(style.stroke_width)
-                            .style(style.line_style.to_egui())
-                            .color(style.color),
-                    );
-                    plot_ui.points(
-                        Points::new(PlotPoints::from(r_pts))
-                            .radius(style.stroke_width + 2.0_f32)
-                            .color(style.color),
-                    );
-                    continue;
-                }
+                let vis_bounds = plot_ui.plot_bounds();
+                let (vis_min_x, vis_min_y) = (vis_bounds.min()[0], vis_bounds.min()[1]);
+                let (vis_max_x, vis_max_y) = (vis_bounds.max()[0], vis_bounds.max()[1]);
 
-                let (s_min, s_max) = if let Some((cmin, cmax)) = style.custom_domain {
-                    (cmin.max(global_sample_min), cmax.min(global_sample_max))
-                } else {
-                    (global_sample_min, global_sample_max)
+                let global_sample_min =
+                    if vis_min_x.is_finite() && (vis_max_x - vis_min_x) > 1e-4_f64 {
+                        vis_min_x
+                    } else {
+                        self.domain_min
+                    };
+                let global_sample_max =
+                    if vis_max_x.is_finite() && (vis_max_x - vis_min_x) > 1e-4_f64 {
+                        vis_max_x
+                    } else {
+                        self.domain_max
+                    };
+
+                let ext_bridge = REngineMathBridge {
+                    r_objects: &self.workspace.r_objects,
                 };
+                let eval_ctx = self.build_eval_context(&ext_bridge);
 
-                let Ok(plottable) = self.workspace.compiled_math.classify_entry(sig, expr) else {
-                    continue;
-                };
+                for (idx, (sig, expr)) in self.workspace.functions.iter().enumerate() {
+                    let style = self
+                        .workspace
+                        .function_styles
+                        .get(sig)
+                        .cloned()
+                        .unwrap_or_else(|| FunctionStyle::default_for_index(idx));
 
-                match plottable {
-                    PlottableEntry::Explicit1D { compiled } => {
-                        if s_max <= s_min {
-                            continue;
-                        }
-                        let branches = math::sample_1d_branches(
-                            &compiled,
-                            &eval_ctx,
-                            s_min,
-                            s_max,
-                            vis_min_y,
-                            vis_max_y,
-                            self.curve_samples,
-                            self.asymptote_jump_factor,
+                    if !style.visible || style.role == FunctionPlotRole::Surface3DOnly {
+                        continue;
+                    }
+
+                    let series_label = format!("{} = {}", Self::format_symbolic_math(sig), expr);
+
+                    // Live R scatter/line layer when referencing R vectors, `df$col`, `(df$x, df$y)`, or `predict(fit)`
+                    if let Some(r_pts) =
+                        crate::r_engine::try_extract_r_plot_series(expr, &self.workspace.r_objects)
+                    {
+                        draw_glowing_plot_line(
+                            plot_ui,
+                            r_pts.clone(),
+                            &series_label,
+                            style.color,
+                            style.stroke_width,
+                            style.line_style.to_egui(),
                         );
-                        match style.role {
-                            FunctionPlotRole::StandardCurve => {
-                                for branch in branches {
-                                    plot_ui.line(
-                                        Line::new(PlotPoints::from(branch))
-                                            .name(&series_label)
-                                            .width(style.stroke_width)
-                                            .style(style.line_style.to_egui())
-                                            .color(style.color),
-                                    );
-                                }
+                        plot_ui.points(
+                            Points::new(PlotPoints::from(r_pts))
+                                .radius(style.stroke_width + 2.0_f32)
+                                .color(style.color),
+                        );
+                        continue;
+                    }
+
+                    let (s_min, s_max) = if let Some((cmin, cmax)) = style.custom_domain {
+                        (cmin.max(global_sample_min), cmax.min(global_sample_max))
+                    } else {
+                        (global_sample_min, global_sample_max)
+                    };
+
+                    let Ok(plottable) = self.workspace.compiled_math.classify_entry(sig, expr)
+                    else {
+                        continue;
+                    };
+
+                    match plottable {
+                        PlottableEntry::Explicit1D { compiled } => {
+                            if s_max <= s_min {
+                                continue;
                             }
-                            FunctionPlotRole::AreaUnderCurve => {
-                                for branch in branches {
-                                    if branch.len() >= 2 {
-                                        let mut poly = Vec::with_capacity(branch.len() + 2);
-                                        poly.push([branch[0][0], 0.0_f64]);
-                                        poly.extend_from_slice(&branch);
-                                        poly.push([branch[branch.len() - 1][0], 0.0_f64]);
-                                        plot_ui.polygon(
-                                            Polygon::new(PlotPoints::from(poly))
-                                                .name(&series_label)
-                                                .fill_color(style.color.gamma_multiply(0.22_f32))
-                                                .stroke(Stroke::new(
-                                                    style.stroke_width,
-                                                    style.color,
-                                                )),
+                            let branches = math::sample_1d_branches(
+                                &compiled,
+                                &eval_ctx,
+                                s_min,
+                                s_max,
+                                vis_min_y,
+                                vis_max_y,
+                                self.curve_samples,
+                                self.asymptote_jump_factor,
+                            );
+                            match style.role {
+                                FunctionPlotRole::StandardCurve => {
+                                    for branch in branches {
+                                        draw_glowing_plot_line(
+                                            plot_ui,
+                                            branch,
+                                            &series_label,
+                                            style.color,
+                                            style.stroke_width,
+                                            style.line_style.to_egui(),
                                         );
                                     }
                                 }
-                            }
-                            FunctionPlotRole::SampledPoints => {
-                                for branch in branches {
-                                    plot_ui.points(
-                                        Points::new(PlotPoints::from(branch))
-                                            .name(&series_label)
-                                            .radius(style.stroke_width + 1.5_f32)
-                                            .color(style.color),
-                                    );
+                                FunctionPlotRole::AreaUnderCurve => {
+                                    for branch in branches {
+                                        if branch.len() >= 2 {
+                                            let mut poly = Vec::with_capacity(branch.len() + 2);
+                                            poly.push([branch[0][0], 0.0_f64]);
+                                            poly.extend_from_slice(&branch);
+                                            poly.push([branch[branch.len() - 1][0], 0.0_f64]);
+                                            plot_ui.polygon(
+                                                Polygon::new(PlotPoints::from(poly))
+                                                    .name(&series_label)
+                                                    .fill_color(
+                                                        style.color.gamma_multiply(0.22_f32),
+                                                    )
+                                                    .stroke(Stroke::new(
+                                                        style.stroke_width,
+                                                        style.color,
+                                                    )),
+                                            );
+                                        }
+                                    }
                                 }
+                                FunctionPlotRole::SampledPoints => {
+                                    for branch in branches {
+                                        plot_ui.points(
+                                            Points::new(PlotPoints::from(branch))
+                                                .name(&series_label)
+                                                .radius(style.stroke_width + 1.5_f32)
+                                                .color(style.color),
+                                        );
+                                    }
+                                }
+                                FunctionPlotRole::Surface3DOnly => {}
                             }
-                            FunctionPlotRole::Surface3DOnly => {}
                         }
+                        PlottableEntry::ImplicitEquation { diff_compiled } => {
+                            let contours = math::sample_implicit_contours(
+                                &diff_compiled,
+                                &eval_ctx,
+                                global_sample_min,
+                                global_sample_max,
+                                vis_min_y,
+                                vis_max_y,
+                                72,
+                                72,
+                            );
+                            for chain in contours {
+                                draw_glowing_plot_line(
+                                    plot_ui,
+                                    chain,
+                                    &series_label,
+                                    style.color,
+                                    style.stroke_width,
+                                    style.line_style.to_egui(),
+                                );
+                            }
+                        }
+                        PlottableEntry::ExplicitYInequality { op, rhs_compiled } => {
+                            if s_max <= s_min {
+                                continue;
+                            }
+                            let region = math::sample_explicit_y_inequality(
+                                &rhs_compiled,
+                                op,
+                                &eval_ctx,
+                                s_min,
+                                s_max,
+                                vis_min_y,
+                                vis_max_y,
+                                self.curve_samples,
+                                self.asymptote_jump_factor,
+                            );
+                            for poly in region.shaded_polygons {
+                                plot_ui.polygon(
+                                    Polygon::new(PlotPoints::from(poly))
+                                        .name(&series_label)
+                                        .fill_color(style.color.gamma_multiply(0.18_f32))
+                                        .stroke(Stroke::NONE),
+                                );
+                            }
+                            let bound_style = if region.strict {
+                                LineStyle::Dashed { length: 7.0_f32 }
+                            } else {
+                                style.line_style.to_egui()
+                            };
+                            for branch in region.boundary_curves {
+                                draw_glowing_plot_line(
+                                    plot_ui,
+                                    branch,
+                                    &series_label,
+                                    style.color,
+                                    style.stroke_width,
+                                    bound_style,
+                                );
+                            }
+                        }
+                        PlottableEntry::ImplicitInequality { op, diff_compiled } => {
+                            let region = math::sample_implicit_2d_inequality(
+                                &diff_compiled,
+                                op,
+                                &eval_ctx,
+                                global_sample_min,
+                                global_sample_max,
+                                vis_min_y,
+                                vis_max_y,
+                                64,
+                                64,
+                            );
+                            for poly in region.shaded_polygons {
+                                plot_ui.polygon(
+                                    Polygon::new(PlotPoints::from(poly))
+                                        .fill_color(style.color.gamma_multiply(0.18_f32))
+                                        .stroke(Stroke::NONE),
+                                );
+                            }
+                            let bound_style = if region.strict {
+                                LineStyle::Dashed { length: 7.0_f32 }
+                            } else {
+                                style.line_style.to_egui()
+                            };
+                            for chain in region.boundary_curves {
+                                draw_glowing_plot_line(
+                                    plot_ui,
+                                    chain,
+                                    &series_label,
+                                    style.color,
+                                    style.stroke_width,
+                                    bound_style,
+                                );
+                            }
+                        }
+                        PlottableEntry::Parametric {
+                            param,
+                            x_compiled,
+                            y_compiled,
+                        } => {
+                            let (t0, t1) = style
+                                .custom_domain
+                                .unwrap_or((0.0_f64, std::f64::consts::TAU));
+                            let branches = math::sample_parametric_branches(
+                                &x_compiled,
+                                &y_compiled,
+                                &param,
+                                &eval_ctx,
+                                t0,
+                                t1,
+                                self.curve_samples,
+                            );
+                            for branch in branches {
+                                draw_glowing_plot_line(
+                                    plot_ui,
+                                    branch,
+                                    &series_label,
+                                    style.color,
+                                    style.stroke_width,
+                                    style.line_style.to_egui(),
+                                );
+                            }
+                        }
+                        PlottableEntry::Polar { param, r_compiled } => {
+                            let (t0, t1) = style
+                                .custom_domain
+                                .unwrap_or((0.0_f64, std::f64::consts::TAU));
+                            let branches = math::sample_polar_branches(
+                                &r_compiled,
+                                &param,
+                                &eval_ctx,
+                                t0,
+                                t1,
+                                self.curve_samples,
+                            );
+                            for branch in branches {
+                                draw_glowing_plot_line(
+                                    plot_ui,
+                                    branch,
+                                    &series_label,
+                                    style.color,
+                                    style.stroke_width,
+                                    style.line_style.to_egui(),
+                                );
+                            }
+                        }
+                        PlottableEntry::ScalarOnly { .. } => {}
                     }
-                    PlottableEntry::ImplicitEquation { diff_compiled } => {
-                        let contours = math::sample_implicit_contours(
-                            &diff_compiled,
-                            &eval_ctx,
-                            global_sample_min,
-                            global_sample_max,
+                }
+
+                if self.show_derivative_overlay {
+                    if let Some((sig, expr)) = self.workspace.functions.iter().next() {
+                        let samples = (self.curve_samples / 2).clamp(64, 600);
+                        let span = (global_sample_max - global_sample_min).max(1e-4_f64);
+                        let deriv_pts: PlotPoints = (0..=samples)
+                            .filter_map(|i| {
+                                let x = global_sample_min + span * (i as f64) / (samples as f64);
+                                let dy = self.numerical_derivative(expr, x).ok()?;
+                                (dy.is_finite()
+                                    && dy >= vis_min_y * 3.0_f64
+                                    && dy <= vis_max_y * 3.0_f64)
+                                    .then_some([x, dy])
+                            })
+                            .collect();
+
+                        plot_ui.line(
+                            Line::new(deriv_pts)
+                                .name(format!("d/dx {}", sig))
+                                .width(1.8_f32)
+                                .style(LineStyle::Dotted { spacing: 5.0_f32 })
+                                .color(pal.accent_purple),
+                        );
+                    }
+                }
+
+                if self.show_integral_shade {
+                    if let Some((sig, expr)) = self.workspace.functions.iter().next() {
+                        let branches = self.sample_function_branches(
+                            expr,
+                            self.domain_min,
+                            self.domain_max,
                             vis_min_y,
                             vis_max_y,
-                            72,
-                            72,
-                        );
-                        for chain in contours {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(chain))
-                                    .name(&series_label)
-                                    .width(style.stroke_width)
-                                    .style(style.line_style.to_egui())
-                                    .color(style.color),
-                            );
-                        }
-                    }
-                    PlottableEntry::ExplicitYInequality { op, rhs_compiled } => {
-                        if s_max <= s_min {
-                            continue;
-                        }
-                        let region = math::sample_explicit_y_inequality(
-                            &rhs_compiled,
-                            op,
-                            &eval_ctx,
-                            s_min,
-                            s_max,
-                            vis_min_y,
-                            vis_max_y,
-                            self.curve_samples,
-                            self.asymptote_jump_factor,
-                        );
-                        for poly in region.shaded_polygons {
-                            plot_ui.polygon(
-                                Polygon::new(PlotPoints::from(poly))
-                                    .name(&series_label)
-                                    .fill_color(style.color.gamma_multiply(0.18_f32))
-                                    .stroke(Stroke::NONE),
-                            );
-                        }
-                        let bound_style = if region.strict {
-                            LineStyle::Dashed { length: 7.0_f32 }
-                        } else {
-                            style.line_style.to_egui()
-                        };
-                        for branch in region.boundary_curves {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(branch))
-                                    .name(&series_label)
-                                    .width(style.stroke_width)
-                                    .style(bound_style)
-                                    .color(style.color),
-                            );
-                        }
-                    }
-                    PlottableEntry::ImplicitInequality { op, diff_compiled } => {
-                        let region = math::sample_implicit_2d_inequality(
-                            &diff_compiled,
-                            op,
-                            &eval_ctx,
-                            global_sample_min,
-                            global_sample_max,
-                            vis_min_y,
-                            vis_max_y,
-                            64,
-                            64,
-                        );
-                        for poly in region.shaded_polygons {
-                            plot_ui.polygon(
-                                Polygon::new(PlotPoints::from(poly))
-                                    .fill_color(style.color.gamma_multiply(0.18_f32))
-                                    .stroke(Stroke::NONE),
-                            );
-                        }
-                        let bound_style = if region.strict {
-                            LineStyle::Dashed { length: 7.0_f32 }
-                        } else {
-                            style.line_style.to_egui()
-                        };
-                        for chain in region.boundary_curves {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(chain))
-                                    .name(&series_label)
-                                    .width(style.stroke_width)
-                                    .style(bound_style)
-                                    .color(style.color),
-                            );
-                        }
-                    }
-                    PlottableEntry::Parametric {
-                        param,
-                        x_compiled,
-                        y_compiled,
-                    } => {
-                        let (t0, t1) = style
-                            .custom_domain
-                            .unwrap_or((0.0_f64, std::f64::consts::TAU));
-                        let branches = math::sample_parametric_branches(
-                            &x_compiled,
-                            &y_compiled,
-                            &param,
-                            &eval_ctx,
-                            t0,
-                            t1,
-                            self.curve_samples,
+                            160,
                         );
                         for branch in branches {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(branch))
-                                    .name(&series_label)
-                                    .width(style.stroke_width)
-                                    .style(style.line_style.to_egui())
-                                    .color(style.color),
-                            );
+                            if branch.len() >= 2 {
+                                let mut poly = Vec::with_capacity(branch.len() + 2);
+                                poly.push([branch[0][0], 0.0_f64]);
+                                poly.extend_from_slice(&branch);
+                                poly.push([branch[branch.len() - 1][0], 0.0_f64]);
+                                plot_ui.polygon(
+                                    Polygon::new(PlotPoints::from(poly))
+                                        .name(format!("∫ {} dx", sig))
+                                        .fill_color(pal.accent_blue.gamma_multiply(0.18_f32))
+                                        .stroke(Stroke::new(1.0_f32, pal.accent_blue)),
+                                );
+                            }
                         }
                     }
-                    PlottableEntry::Polar { param, r_compiled } => {
-                        let (t0, t1) = style
-                            .custom_domain
-                            .unwrap_or((0.0_f64, std::f64::consts::TAU));
-                        let branches = math::sample_polar_branches(
-                            &r_compiled,
-                            &param,
-                            &eval_ctx,
-                            t0,
-                            t1,
-                            self.curve_samples,
+                }
+
+                if self.show_probe_marker {
+                    if let Some((sig, expr)) = self.workspace.functions.iter().next() {
+                        if let Ok(y_probe) = self.eval_expression_str(expr, self.probe_x, 10.0_f64)
+                        {
+                            if y_probe.is_finite() {
+                                plot_ui.vline(
+                                    VLine::new(self.probe_x)
+                                        .name(format!("Probe x₀ = {:.2}", self.probe_x))
+                                        .style(LineStyle::Dotted { spacing: 6.0_f32 })
+                                        .color(pal.text_muted),
+                                );
+                                plot_ui.points(
+                                    Points::new(vec![[self.probe_x, y_probe]])
+                                        .name(format!(
+                                            "{}({:.2}) = {:.3}",
+                                            sig, self.probe_x, y_probe
+                                        ))
+                                        .radius(5.5_f32)
+                                        .shape(MarkerShape::Diamond)
+                                        .color(pal.accent_amber),
+                                );
+                            }
+                        }
+                    }
+                }
+
+                if self.show_equilibrium_overlay {
+                    if let Some((ix, iy)) = self.find_primary_secondary_intersection() {
+                        plot_ui.points(
+                            Points::new(vec![[ix, iy]])
+                                .name(format!("Intersection ({:.3}, {:.3})", ix, iy))
+                                .radius(6.5_f32)
+                                .shape(MarkerShape::Circle)
+                                .color(pal.accent_green),
                         );
-                        for branch in branches {
-                            plot_ui.line(
-                                Line::new(PlotPoints::from(branch))
-                                    .name(&series_label)
-                                    .width(style.stroke_width)
-                                    .style(style.line_style.to_egui())
-                                    .color(style.color),
-                            );
-                        }
                     }
-                    PlottableEntry::ScalarOnly { .. } => {}
                 }
-            }
 
-            if self.show_derivative_overlay {
-                if let Some((sig, expr)) = self.workspace.functions.iter().next() {
-                    let samples = (self.curve_samples / 2).clamp(64, 600);
-                    let span = (global_sample_max - global_sample_min).max(1e-4_f64);
-                    let deriv_pts: PlotPoints = (0..=samples)
-                        .filter_map(|i| {
-                            let x = global_sample_min + span * (i as f64) / (samples as f64);
-                            let dy = self.numerical_derivative(expr, x).ok()?;
-                            (dy.is_finite()
-                                && dy >= vis_min_y * 3.0_f64
-                                && dy <= vis_max_y * 3.0_f64)
-                                .then_some([x, dy])
-                        })
-                        .collect();
+                for ds in &self.workspace.datasets {
+                    if ds.show_on_plot && !ds.points.is_empty() {
+                        plot_ui.points(
+                            Points::new(ds.points.clone())
+                                .name(format!("{} (n={})", ds.name, ds.points.len()))
+                                .radius(4.8_f32)
+                                .shape(MarkerShape::Cross)
+                                .color(ds.color),
+                        );
 
-                    plot_ui.line(
-                        Line::new(deriv_pts)
-                            .name(format!("d/dx {}", sig))
-                            .width(1.8_f32)
-                            .style(LineStyle::Dotted { spacing: 5.0_f32 })
-                            .color(pal.accent_purple),
-                    );
-                }
-            }
-
-            if self.show_integral_shade {
-                if let Some((sig, expr)) = self.workspace.functions.iter().next() {
-                    let branches = self.sample_function_branches(
-                        expr,
-                        self.domain_min,
-                        self.domain_max,
-                        vis_min_y,
-                        vis_max_y,
-                        160,
-                    );
-                    for branch in branches {
-                        if branch.len() >= 2 {
-                            let mut poly = Vec::with_capacity(branch.len() + 2);
-                            poly.push([branch[0][0], 0.0_f64]);
-                            poly.extend_from_slice(&branch);
-                            poly.push([branch[branch.len() - 1][0], 0.0_f64]);
-                            plot_ui.polygon(
-                                Polygon::new(PlotPoints::from(poly))
-                                    .name(format!("∫ {} dx", sig))
-                                    .fill_color(pal.accent_blue.gamma_multiply(0.18_f32))
-                                    .stroke(Stroke::new(1.0_f32, pal.accent_blue)),
-                            );
+                        if ds.show_ols_line {
+                            if let Some((b1, b0, r2)) = Self::compute_points_ols(&ds.points) {
+                                let ols_pts = PlotPoints::from(vec![
+                                    [global_sample_min, b1 * global_sample_min + b0],
+                                    [global_sample_max, b1 * global_sample_max + b0],
+                                ]);
+                                plot_ui.line(
+                                    Line::new(ols_pts)
+                                        .name(format!(
+                                            "{} OLS: y={:.2}x+{:.2} (R²={:.2})",
+                                            ds.name, b1, b0, r2
+                                        ))
+                                        .width(1.6_f32)
+                                        .style(LineStyle::Dashed { length: 6.0_f32 })
+                                        .color(ds.color),
+                                );
+                            }
                         }
                     }
                 }
-            }
-
-            if self.show_probe_marker {
-                if let Some((sig, expr)) = self.workspace.functions.iter().next() {
-                    if let Ok(y_probe) = self.eval_expression_str(expr, self.probe_x, 10.0_f64) {
-                        if y_probe.is_finite() {
-                            plot_ui.vline(
-                                VLine::new(self.probe_x)
-                                    .name(format!("Probe x₀ = {:.2}", self.probe_x))
-                                    .style(LineStyle::Dotted { spacing: 6.0_f32 })
-                                    .color(pal.text_muted),
-                            );
-                            plot_ui.points(
-                                Points::new(vec![[self.probe_x, y_probe]])
-                                    .name(format!("{}({:.2}) = {:.3}", sig, self.probe_x, y_probe))
-                                    .radius(5.5_f32)
-                                    .shape(MarkerShape::Diamond)
-                                    .color(pal.accent_amber),
-                            );
-                        }
-                    }
-                }
-            }
-
-            if self.show_equilibrium_overlay {
-                if let Some((ix, iy)) = self.find_primary_secondary_intersection() {
-                    plot_ui.points(
-                        Points::new(vec![[ix, iy]])
-                            .name(format!("Intersection ({:.3}, {:.3})", ix, iy))
-                            .radius(6.5_f32)
-                            .shape(MarkerShape::Circle)
-                            .color(pal.accent_green),
-                    );
-                }
-            }
-
-            for ds in &self.workspace.datasets {
-                if ds.show_on_plot && !ds.points.is_empty() {
-                    plot_ui.points(
-                        Points::new(ds.points.clone())
-                            .name(format!("{} (n={})", ds.name, ds.points.len()))
-                            .radius(4.8_f32)
-                            .shape(MarkerShape::Cross)
-                            .color(ds.color),
-                    );
-
-                    if ds.show_ols_line {
-                        if let Some((b1, b0, r2)) = Self::compute_points_ols(&ds.points) {
-                            let ols_pts = PlotPoints::from(vec![
-                                [global_sample_min, b1 * global_sample_min + b0],
-                                [global_sample_max, b1 * global_sample_max + b0],
-                            ]);
-                            plot_ui.line(
-                                Line::new(ols_pts)
-                                    .name(format!(
-                                        "{} OLS: y={:.2}x+{:.2} (R²={:.2})",
-                                        ds.name, b1, b0, r2
-                                    ))
-                                    .width(1.6_f32)
-                                    .style(LineStyle::Dashed { length: 6.0_f32 })
-                                    .color(ds.color),
-                            );
-                        }
-                    }
-                }
-            }
+            });
         });
     }
 
@@ -4168,7 +4950,7 @@ print(p_main)
 
         let clipped_rect = rect.intersect(ui.clip_rect());
         let painter = ui.painter_at(clipped_rect);
-        painter.rect_filled(rect, Rounding::same(6.0_f32), pal.extreme_bg);
+        painter.rect_filled(rect, Rounding::same(6.0_f32), pal.plot_bg);
         painter.rect_stroke(
             rect,
             Rounding::same(6.0_f32),
@@ -4396,261 +5178,500 @@ print(p_main)
     }
 
     // =========================================================================
-    // BOTTOM DOCK: QUICK CONSOLE (R & QUICK MATH), SCRIPT EDITOR & SETTINGS
+    // CARD 4 — CENTER BOTTOM: CONSOLE | SCRIPT | SETTINGS
     // =========================================================================
 
     fn render_bottom_dock(&mut self, ui: &mut Ui) {
         let pal = self.palette();
-
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
+        render_bento_card_frame(ui, pal, None, |ui| {
+            let act = render_card_tab_header(
+                ui,
+                pal,
                 &mut self.bottom_tab,
-                BottomDockTab::QuickConsole,
-                RichText::new(format!(
-                    "⚡ Quick Console & R REPL ({})",
-                    self.console_logs.len()
-                ))
-                .strong(),
+                &[
+                    (BottomDockTab::QuickConsole, "Console"),
+                    (BottomDockTab::ScriptEditor, "Script"),
+                    (BottomDockTab::NumericAndGraphSettings, "Settings"),
+                ],
+                false,
+                true,
+                true,
+                "Hide Bottom Console & Script Card",
+                "Pop-Out Console / Script Window",
             );
-            ui.selectable_value(
-                &mut self.bottom_tab,
-                BottomDockTab::ScriptEditor,
-                RichText::new("📝 Script Editor").strong(),
-            );
-            ui.selectable_value(
-                &mut self.bottom_tab,
-                BottomDockTab::NumericAndGraphSettings,
-                RichText::new("⚙ Numeric, Calculus & Graph Settings").strong(),
-            );
+            if act.minimize_clicked {
+                self.show_bottom_panel = false;
+            }
+            if act.popout_clicked {
+                self.floating_console_window = !self.floating_console_window;
+            }
+            self.render_bottom_dock_body(ui, pal);
         });
-        ui.separator();
+    }
+
+    fn render_bottom_dock_body(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        // Sub-toolbar matching Bento IDE aesthetic
+        render_card_sub_toolbar(ui, pal, |ui| {
+            if ui
+                .add(
+                    egui::Button::new(
+                        RichText::new("▶ Run")
+                            .font(FontId::proportional(11.6_f32))
+                            .strong()
+                            .color(pal.accent_green),
+                    )
+                    .fill(pal.pill_bg)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .rounding(Rounding::same(5.0_f32)),
+                )
+                .on_hover_text("Run Script Editor (Ctrl+Enter) or active Console input")
+                .clicked()
+            {
+                if self.bottom_tab == BottomDockTab::QuickConsole
+                    && !self.quick_command_input.trim().is_empty()
+                {
+                    let cmd = self.quick_command_input.clone();
+                    self.quick_command_input.clear();
+                    self.execute_console_command(&cmd);
+                } else {
+                    self.evaluate_editor_script();
+                }
+            }
+            if ui
+                .add(pill_button("🧹 Clear", false, pal))
+                .on_hover_text("Clear console output")
+                .clicked()
+            {
+                self.console_logs.clear();
+                self.status_banner = "Console cleared.".to_string();
+            }
+            if ui
+                .add(pill_button("📋 Copy", false, pal))
+                .on_hover_text("Copy console transcript to clipboard")
+                .clicked()
+            {
+                let transcript: String = self
+                    .console_logs
+                    .iter()
+                    .map(|e| format!("> {}\n{}", e.source_line, e.message))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                ui.ctx().copy_text(transcript);
+                self.status_banner = "Copied console output to clipboard.".to_string();
+            }
+            if ui
+                .add(pill_button("📂 Load .R", false, pal))
+                .on_hover_text("Load exports/workspace_script.R into Script Editor")
+                .clicked()
+            {
+                let path = PathBuf::from("exports/workspace_script.R");
+                match load_text_file(&path) {
+                    Ok(txt) => {
+                        self.editor_script = txt;
+                        self.bottom_tab = BottomDockTab::ScriptEditor;
+                        self.status_banner = "Loaded exports/workspace_script.R".to_string();
+                    }
+                    Err(_) => {
+                        self.show_left_panel = true;
+                        self.left_bottom_collapsed = false;
+                        self.left_bottom_tab = LeftBottomTab::Files;
+                        self.file_filter = FileFilterKind::Scripts;
+                        self.status_banner =
+                            "Select a .R script from the Files explorer.".to_string();
+                    }
+                }
+            }
+            if ui
+                .add(pill_button("💾 Save .R", false, pal))
+                .on_hover_text("Save Script Editor to exports/workspace_script.R")
+                .clicked()
+            {
+                self.save_editor_script_default();
+            }
+            if ui
+                .add(pill_button("❓ Help", false, pal))
+                .on_hover_text("Open interactive help (`general-help`)")
+                .clicked()
+            {
+                self.execute_console_command("general-help");
+                self.floating_help_window = true;
+            }
+        });
 
         match self.bottom_tab {
             BottomDockTab::QuickConsole => {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new(">")
-                            .font(FontId::monospace(14.5_f32))
-                            .strong()
-                            .color(pal.accent_green),
-                    );
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.quick_command_input)
-                            .font(FontId::monospace(13.0_f32))
-                            .desired_width(ui.available_width() - 150.0_f32)
-                            .hint_text(
-                                "Quick Math or R: `2 + 2`, `x <- c(1,2,3)`, `rep(5,4)`, `mean(x)`, `intro-help`, `general-help`",
-                            ),
-                    );
-                    let enter_pressed =
-                        resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if ui
-                        .button(RichText::new("Run").strong().color(pal.accent_green))
-                        .clicked()
-                        || enter_pressed
-                    {
-                        let cmd = self.quick_command_input.clone();
-                        self.quick_command_input.clear();
-                        self.execute_console_command(&cmd);
-                        resp.request_focus();
-                    }
-                    if ui.small_button("Clear").clicked() {
-                        self.console_logs.clear();
-                    }
-                });
-                ui.add_space(3.0_f32);
+                egui::Frame::none()
+                    .fill(pal.plot_bg)
+                    .rounding(Rounding {
+                        nw: 0.0_f32,
+                        ne: 0.0_f32,
+                        sw: 8.0_f32,
+                        se: 8.0_f32,
+                    })
+                    .inner_margin(Margin::symmetric(10.0_f32, 6.0_f32))
+                    .show(ui, |ui| {
+                        let prompt_h = 28.0_f32;
+                        let scroll_h = (ui.available_height() - prompt_h - 4.0_f32).max(40.0_f32);
 
-                egui::ScrollArea::vertical()
-                    .id_source("quick_console_scroll")
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for entry in &self.console_logs {
-                            let tag_color = if entry.is_error {
-                                pal.accent_red
-                            } else {
-                                pal.accent_blue
-                            };
-                            let msg_color = if entry.is_error {
-                                pal.accent_red
-                            } else {
-                                pal.text_primary
-                            };
-                            ui.horizontal_wrapped(|ui| {
-                                ui.monospace(
-                                    RichText::new(format!("[{}]", entry.timestamp_tag))
-                                        .strong()
-                                        .color(tag_color),
-                                );
-                                ui.monospace(
-                                    RichText::new(format!("{} →", entry.source_line))
-                                        .color(pal.text_muted),
-                                );
-                                ui.monospace(RichText::new(&entry.message).color(msg_color));
+                        egui::ScrollArea::vertical()
+                            .id_source("quick_console_scroll")
+                            .stick_to_bottom(true)
+                            .auto_shrink([false, false])
+                            .max_height(scroll_h)
+                            .show(ui, |ui| {
+                                if self.console_logs.is_empty() {
+                                    ui.monospace(
+                                        RichText::new("Interactive console ready.")
+                                            .font(FontId::monospace(12.2_f32))
+                                            .color(pal.text_muted),
+                                    );
+                                } else {
+                                    for entry in &self.console_logs {
+                                        // Command echo line: `> command`
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.monospace(
+                                                RichText::new(">")
+                                                    .font(FontId::monospace(12.2_f32))
+                                                    .strong()
+                                                    .color(pal.accent_blue),
+                                            )
+                                            .on_hover_text(format!(
+                                                "Source: {}",
+                                                entry.timestamp_tag
+                                            ));
+                                            ui.monospace(
+                                                RichText::new(&entry.source_line)
+                                                    .font(FontId::monospace(12.2_f32))
+                                                    .color(pal.text_primary),
+                                            )
+                                            .on_hover_text(format!(
+                                                "Source: {}",
+                                                entry.timestamp_tag
+                                            ));
+                                        });
+                                        // Output line(s) right below
+                                        let msg_color = if entry.is_error {
+                                            pal.accent_red
+                                        } else {
+                                            pal.text_secondary
+                                        };
+                                        ui.monospace(
+                                            RichText::new(&entry.message)
+                                                .font(FontId::monospace(12.0_f32))
+                                                .color(msg_color),
+                                        );
+                                        ui.add_space(3.0_f32);
+                                    }
+                                }
                             });
-                        }
-                    });
-            }
-            BottomDockTab::ScriptEditor => {
-                ui.horizontal_wrapped(|ui| {
-                    if ui
-                        .button(
-                            RichText::new("▶ Run Script (Ctrl+Enter)")
-                                .strong()
-                                .color(pal.accent_green),
-                        )
-                        .clicked()
-                        || ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter))
-                    {
-                        self.evaluate_editor_script();
-                    }
-                    if ui.button("Save .R Script").clicked() {
-                        let _ = save_text_file(
-                            &PathBuf::from("exports/workspace_script.R"),
-                            &self.editor_script,
-                        );
-                        self.status_banner =
-                            "Saved script to exports/workspace_script.R".to_string();
-                        self.refresh_project_files();
-                    }
-                    ui.label(
-                        RichText::new("Supports formulas `f(x) = ...`, parameters `a = 2`, and R commands `v <- c(1,2,3)`")
-                            .font(FontId::proportional(11.5_f32))
-                            .color(pal.text_muted),
-                    );
-                });
-                ui.add_space(3.0_f32);
-                egui::ScrollArea::vertical()
-                    .id_source("script_editor_scroll")
-                    .show(ui, |ui| {
-                        ui.add_sized(
-                            ui.available_size(),
-                            egui::TextEdit::multiline(&mut self.editor_script)
-                                .code_editor()
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(8),
-                        );
-                    });
-            }
-            BottomDockTab::NumericAndGraphSettings => {
-                egui::ScrollArea::vertical()
-                    .id_source("numeric_settings_scroll")
-                    .show(ui, |ui| {
-                        ui.columns(2, |cols| {
-                            cols[0].label(
-                                RichText::new("1. Home View & Numerical Approximation")
+
+                        ui.add_space(3.0_f32);
+                        // Integrated terminal prompt at the bottom
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(">")
+                                    .font(FontId::monospace(13.5_f32))
                                     .strong()
                                     .color(pal.accent_blue),
                             );
-                            cols[0].horizontal(|ui| {
-                                ui.label("Home X Range:");
-                                ui.add(egui::DragValue::new(&mut self.home_x_min).speed(0.5_f64));
-                                ui.label("to");
-                                ui.add(egui::DragValue::new(&mut self.home_x_max).speed(0.5_f64));
-                            });
-                            cols[0].horizontal(|ui| {
-                                ui.label("Home Y Range:");
-                                ui.add(egui::DragValue::new(&mut self.home_y_min).speed(0.5_f64));
-                                ui.label("to");
-                                ui.add(egui::DragValue::new(&mut self.home_y_max).speed(0.5_f64));
-                                if ui.small_button("Use Current View as Home").clicked() {
-                                    self.home_x_min = self.domain_min;
-                                    self.home_x_max = self.domain_max;
-                                    self.home_y_min = self.domain_y_min;
-                                    self.home_y_max = self.domain_y_max;
-                                }
-                            });
-                            cols[0].add(
-                                egui::Slider::new(&mut self.curve_samples, 64..=2000)
-                                    .text("Curve Render Samples"),
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(&mut self.quick_command_input)
+                                    .font(FontId::monospace(12.4_f32))
+                                    .frame(false)
+                                    .desired_width((ui.available_width() - 56.0_f32).max(80.0_f32))
+                                    .hint_text(
+                                        "Type R or Math: `f(seq(1,5))`, `lm(y ~ x, data = df)`, `2 + 2`, `general-help`",
+                                    ),
                             );
-                            cols[0].add(
-                                egui::Slider::new(&mut self.sim_grid_rows, 10..=500)
-                                    .text("Simulation Grid Rows"),
-                            );
-                            cols[0].add(
-                                egui::Slider::new(&mut self.simpson_subintervals, 20..=1000)
-                                    .text("Simpson Integral Steps N"),
-                            );
-                            cols[0].add(
-                                egui::Slider::new(&mut self.diff_step_h, 1e-7_f64..=1e-2_f64)
-                                    .logarithmic(true)
-                                    .text("Finite Diff Step h"),
-                            );
-
-                            cols[1].label(
-                                RichText::new("2. Opt-In Calculus & Graph Overlays")
-                                    .strong()
-                                    .color(pal.accent_purple),
-                            );
-                            cols[1].checkbox(&mut self.show_plot_grid, "Show Coordinate Grid");
-                            cols[1].checkbox(&mut self.show_plot_legend, "Show Series Legend");
-                            cols[1].checkbox(
-                                &mut self.lock_equal_aspect,
-                                "Lock 1:1 Equal Aspect Ratio",
-                            );
-                            cols[1].separator();
-                            cols[1].checkbox(
-                                &mut self.show_derivative_overlay,
-                                "Overlay Numerical Derivative f'(x)",
-                            );
-                            cols[1].checkbox(
-                                &mut self.show_integral_shade,
-                                "Shade Definite Integral ∫ f(x) dx",
-                            );
-                            cols[1].checkbox(
-                                &mut self.show_equilibrium_overlay,
-                                "Plot Curve Intersection / Equilibrium Marker",
-                            );
-                            cols[1].checkbox(
-                                &mut self.enable_equilibrium_solver,
-                                "Show Solved Equilibrium Panel in Sidebar",
-                            );
-                            cols[1].horizontal(|ui| {
-                                ui.checkbox(&mut self.show_probe_marker, "Show Calculus Probe x₀:");
-                                ui.add(
-                                    egui::Slider::new(
-                                        &mut self.probe_x,
-                                        self.domain_min..=self.domain_max,
+                            let enter_pressed =
+                                resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("↵")
+                                            .strong()
+                                            .color(pal.accent_green),
                                     )
-                                    .show_value(true),
+                                    .fill(pal.pill_bg)
+                                    .stroke(Stroke::new(1.0_f32, pal.border))
+                                    .rounding(Rounding::same(4.0_f32)),
+                                )
+                                .on_hover_text("Execute command (Enter)")
+                                .clicked()
+                                || enter_pressed
+                            {
+                                let cmd = self.quick_command_input.clone();
+                                self.quick_command_input.clear();
+                                self.execute_console_command(&cmd);
+                                resp.request_focus();
+                            }
+                        });
+                    });
+            }
+            BottomDockTab::ScriptEditor => {
+                if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter)) {
+                    self.evaluate_editor_script();
+                }
+                egui::Frame::none()
+                    .fill(pal.plot_bg)
+                    .rounding(Rounding {
+                        nw: 0.0_f32,
+                        ne: 0.0_f32,
+                        sw: 8.0_f32,
+                        se: 8.0_f32,
+                    })
+                    .inner_margin(Margin::same(6.0_f32))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_source("script_editor_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add_sized(
+                                    ui.available_size().max(Vec2::new(120.0_f32, 90.0_f32)),
+                                    egui::TextEdit::multiline(&mut self.editor_script)
+                                        .code_editor()
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(7),
                                 );
                             });
-                        });
+                    });
+            }
+            BottomDockTab::NumericAndGraphSettings => {
+                egui::Frame::none()
+                    .inner_margin(Margin::symmetric(10.0_f32, 6.0_f32))
+                    .show(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_source("numeric_settings_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.columns(2, |cols| {
+                                    cols[0].label(
+                                        RichText::new("1. Home View & Numerical Approximation")
+                                            .strong()
+                                            .color(pal.accent_blue),
+                                    );
+                                    cols[0].horizontal_wrapped(|ui| {
+                                        ui.label("Home X:");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.home_x_min)
+                                                .speed(0.5_f64),
+                                        );
+                                        ui.label("to");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.home_x_max)
+                                                .speed(0.5_f64),
+                                        );
+                                    });
+                                    cols[0].horizontal_wrapped(|ui| {
+                                        ui.label("Home Y:");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.home_y_min)
+                                                .speed(0.5_f64),
+                                        );
+                                        ui.label("to");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.home_y_max)
+                                                .speed(0.5_f64),
+                                        );
+                                        if ui.small_button("Use Current View").clicked() {
+                                            self.home_x_min = self.domain_min;
+                                            self.home_x_max = self.domain_max;
+                                            self.home_y_min = self.domain_y_min;
+                                            self.home_y_max = self.domain_y_max;
+                                        }
+                                    });
+                                    cols[0].add(
+                                        egui::Slider::new(&mut self.curve_samples, 64..=2000)
+                                            .text("Curve Render Samples"),
+                                    );
+                                    cols[0].add(
+                                        egui::Slider::new(&mut self.sim_grid_rows, 10..=500)
+                                            .text("Simulation Grid Rows"),
+                                    );
+                                    cols[0].add(
+                                        egui::Slider::new(
+                                            &mut self.simpson_subintervals,
+                                            20..=1000,
+                                        )
+                                        .text("Simpson Integral Steps N"),
+                                    );
+                                    cols[0].add(
+                                        egui::Slider::new(
+                                            &mut self.diff_step_h,
+                                            1e-7_f64..=1e-2_f64,
+                                        )
+                                        .logarithmic(true)
+                                        .text("Finite Diff Step h"),
+                                    );
+
+                                    cols[1].label(
+                                        RichText::new("2. Opt-In Calculus & Graph Overlays")
+                                            .strong()
+                                            .color(pal.accent_purple),
+                                    );
+                                    cols[1]
+                                        .checkbox(&mut self.show_plot_grid, "Show Coordinate Grid");
+                                    cols[1]
+                                        .checkbox(&mut self.show_plot_legend, "Show Series Legend");
+                                    cols[1].checkbox(
+                                        &mut self.lock_equal_aspect,
+                                        "Lock 1:1 Equal Aspect Ratio",
+                                    );
+                                    cols[1].separator();
+                                    cols[1].checkbox(
+                                        &mut self.show_derivative_overlay,
+                                        "Overlay Numerical Derivative f'(x)",
+                                    );
+                                    cols[1].checkbox(
+                                        &mut self.show_integral_shade,
+                                        "Shade Definite Integral ∫ f(x) dx",
+                                    );
+                                    cols[1].checkbox(
+                                        &mut self.show_equilibrium_overlay,
+                                        "Plot Curve Intersection / Equilibrium Marker",
+                                    );
+                                    cols[1].checkbox(
+                                        &mut self.enable_equilibrium_solver,
+                                        "Show Solved Equilibrium Panel in Symbolic",
+                                    );
+                                    cols[1].horizontal_wrapped(|ui| {
+                                        ui.checkbox(
+                                            &mut self.show_probe_marker,
+                                            "Calculus Probe x₀:",
+                                        );
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut self.probe_x,
+                                                self.domain_min..=self.domain_max,
+                                            )
+                                            .show_value(true),
+                                        );
+                                    });
+                                });
+                            });
                     });
             }
         }
     }
 
     // =========================================================================
-    // RIGHT DOCK: DATASETS, LITERATE NOTES, ANALYSIS/LATEX & HELP CENTER
+    // RIGHT COLUMN BENTO STACK: CARD 5A (ENVIRONMENT) + CARD 5B (DATA / NOTES / LATEX / HELP)
     // =========================================================================
 
-    fn render_right_dock(&mut self, ui: &mut Ui) {
+    fn render_right_column(&mut self, ui: &mut Ui) {
         let pal = self.palette();
+        let avail = ui.available_size();
+        let gap = 6.0_f32;
+        let header_h = 34.0_f32;
 
-        ui.horizontal_wrapped(|ui| {
-            ui.selectable_value(
-                &mut self.right_tab,
-                RightDockTab::Datasets,
-                RichText::new("📊 Datasets").strong(),
-            );
-            ui.selectable_value(
-                &mut self.right_tab,
-                RightDockTab::NotesAndReports,
-                RichText::new("📓 Notes & .qmd").strong(),
-            );
-            ui.selectable_value(
-                &mut self.right_tab,
-                RightDockTab::AnalysisAndLatex,
-                RichText::new("🔬 LaTeX & R").strong(),
-            );
-            ui.selectable_value(
-                &mut self.right_tab,
-                RightDockTab::HelpCenter,
-                RichText::new("❓ Help").strong(),
-            );
+        let (top_h, bot_h) = match (self.env_card_collapsed, self.right_bottom_collapsed) {
+            (true, true) => (header_h, header_h),
+            (true, false) => (header_h, (avail.y - header_h - gap).max(120.0_f32)),
+            (false, true) => ((avail.y - header_h - gap).max(140.0_f32), header_h),
+            (false, false) => {
+                let h1 = ((avail.y - gap) * 0.42_f32).clamp(130.0_f32, (avail.y - 160.0_f32).max(130.0_f32));
+                let h2 = (avail.y - h1 - gap).max(120.0_f32);
+                (h1, h2)
+            }
+        };
+
+        render_bento_card_frame(ui, pal, Some(Vec2::new(avail.x, top_h)), |ui| {
+            self.render_environment_card(ui, pal);
         });
-        ui.separator();
+
+        ui.add_space(gap);
+
+        render_bento_card_frame(ui, pal, Some(Vec2::new(avail.x, bot_h)), |ui| {
+            self.render_right_bottom_card(ui, pal);
+        });
+    }
+
+    fn render_environment_card(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        let mut clear_env = false;
+        let mut toggle_min = false;
+        let mut toggle_popout = false;
+
+        render_card_title_header(ui, pal, "Environment", self.env_card_collapsed, |ui| {
+            if ui
+                .add(header_icon_button("▢", pal.text_secondary))
+                .on_hover_text("Pop-Out Environment Inspector")
+                .clicked()
+            {
+                toggle_popout = true;
+            }
+            if ui
+                .add(header_icon_button(
+                    if self.env_card_collapsed { "+" } else { "—" },
+                    pal.text_secondary,
+                ))
+                .on_hover_text("Collapse Environment Card")
+                .clicked()
+            {
+                toggle_min = true;
+            }
+            if ui
+                .add(header_icon_button("rm()", pal.text_muted))
+                .on_hover_text("Clear R environment (`rm(list=ls())`)")
+                .clicked()
+            {
+                clear_env = true;
+            }
+        });
+
+        if clear_env {
+            self.workspace.r_objects.clear();
+            self.status_banner = "Cleared R environment objects.".to_string();
+        }
+        if toggle_min {
+            self.env_card_collapsed = !self.env_card_collapsed;
+        }
+        if toggle_popout {
+            self.floating_env_window = !self.floating_env_window;
+        }
+        if self.env_card_collapsed {
+            return;
+        }
+
+        self.render_environment_body(ui, pal);
+    }
+
+    fn render_right_bottom_card(&mut self, ui: &mut Ui, pal: ThemePalette) {
+        let act = render_card_tab_header(
+            ui,
+            pal,
+            &mut self.right_tab,
+            &[
+                (RightDockTab::Datasets, "Data Viewer"),
+                (RightDockTab::AnalysisAndLatex, "LaTeX & R"),
+                (RightDockTab::NotesAndReports, "Notes"),
+                (RightDockTab::HelpCenter, "Help"),
+            ],
+            self.right_bottom_collapsed,
+            true,
+            true,
+            "Collapse Data / Notes Card",
+            "Pop-Out Active Tab in Floating Window",
+        );
+
+        if act.minimize_clicked {
+            self.right_bottom_collapsed = !self.right_bottom_collapsed;
+        }
+        if act.popout_clicked {
+            match self.right_tab {
+                RightDockTab::Datasets => {
+                    self.floating_datasets_window = !self.floating_datasets_window;
+                }
+                RightDockTab::NotesAndReports | RightDockTab::AnalysisAndLatex => {
+                    self.floating_notes_window = !self.floating_notes_window;
+                }
+                RightDockTab::HelpCenter => {
+                    self.floating_help_window = !self.floating_help_window;
+                }
+            }
+        }
+        if self.right_bottom_collapsed {
+            return;
+        }
 
         match self.right_tab {
             RightDockTab::Datasets => self.render_datasets_manager_ui(ui, pal),
@@ -4661,196 +5682,227 @@ print(p_main)
     }
 
     fn render_datasets_manager_ui(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new("Datasets & Simulation Tables")
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // Icon-driven sub-toolbar matching Bento Data Viewer
+        let mut add_new_ds = false;
+        let mut gen_from_fn = false;
+        let mut add_row = false;
+        let mut export_csv = false;
+
+        if !self.workspace.datasets.is_empty()
+            && self.workspace.active_dataset_idx >= self.workspace.datasets.len()
+        {
+            self.workspace.active_dataset_idx = 0;
+        }
+
+        render_card_sub_toolbar(ui, pal, |ui| {
+            if let Some(ds) = self.workspace.datasets.get_mut(self.workspace.active_dataset_idx) {
                 if ui
-                    .small_button("🗗 Pop-Out Window")
-                    .on_hover_text("Open Datasets Manager in a resizable floating window")
+                    .add(pill_button("📈", ds.show_on_plot, pal))
+                    .on_hover_text("Toggle Scatter Plot Overlay on 2D Graph")
                     .clicked()
                 {
-                    self.floating_datasets_window = !self.floating_datasets_window;
+                    ds.show_on_plot = !ds.show_on_plot;
                 }
-            });
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.new_dataset_name_input)
-                    .desired_width(90.0_f32)
-                    .hint_text("dataset_name"),
-            );
-            if ui.small_button("+ New Dataset").clicked() {
-                let name = if self.new_dataset_name_input.trim().is_empty() {
-                    format!("data_{}", self.workspace.datasets.len() + 1)
-                } else {
-                    self.new_dataset_name_input.trim().to_string()
-                };
-                self.workspace.datasets.push(DataTable::from_csv_str(
-                    name,
-                    "x,y\n1.0,2.0\n2.0,4.0\n3.0,6.0",
-                    Color32::from_rgb(56, 189, 248),
-                ));
-                self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
+                if ui
+                    .add(pill_button("📉", ds.show_ols_line, pal))
+                    .on_hover_text("Toggle OLS Regression Line Overlay")
+                    .clicked()
+                {
+                    ds.show_ols_line = !ds.show_ols_line;
+                }
+                if ui
+                    .add(pill_button(
+                        if self.dataset_show_raw_csv { "CSV" } else { "⊞" },
+                        self.dataset_show_raw_csv,
+                        pal,
+                    ))
+                    .on_hover_text("Switch between Table Grid and Raw CSV Pasteboard")
+                    .clicked()
+                {
+                    self.dataset_show_raw_csv = !self.dataset_show_raw_csv;
+                }
+                ui.color_edit_button_srgba(&mut ds.color);
             }
+
             if ui
-                .small_button("Generate from f(x)")
-                .on_hover_text("Create a Dataset sampled from the primary function")
+                .add(pill_button("+ New", false, pal))
+                .on_hover_text("Create a new empty dataset")
                 .clicked()
             {
-                let grid = self.build_simulation_grid(self.sim_grid_rows);
-                let mut csv_s = String::from("x,y\n");
-                for r in &grid {
-                    if r.primary_y.is_finite() {
-                        csv_s.push_str(&format!("{:.5},{:.5}\n", r.x, r.primary_y));
-                    }
-                }
-                self.workspace.datasets.push(DataTable::from_csv_str(
-                    format!("sim_{}_rows", grid.len()),
-                    csv_s,
-                    Color32::from_rgb(16, 185, 129),
-                ));
-                self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
+                add_new_ds = true;
+            }
+            if ui
+                .add(pill_button("ƒ(x)→Tbl", false, pal))
+                .on_hover_text("Generate Dataset sampled from primary f(x)")
+                .clicked()
+            {
+                gen_from_fn = true;
+            }
+            if ui
+                .add(pill_button("+ Row", false, pal))
+                .on_hover_text("Append new (x, y) row")
+                .clicked()
+            {
+                add_row = true;
+            }
+            if ui
+                .add(pill_button("💾 CSV", false, pal))
+                .on_hover_text("Export active dataset to exports/<name>.csv")
+                .clicked()
+            {
+                export_csv = true;
             }
         });
 
-        if !self.workspace.datasets.is_empty() {
-            if self.workspace.active_dataset_idx >= self.workspace.datasets.len() {
-                self.workspace.active_dataset_idx = 0;
-            }
-            ui.horizontal_wrapped(|ui| {
-                for idx in 0..self.workspace.datasets.len() {
-                    let name = self.workspace.datasets[idx].name.clone();
-                    ui.selectable_value(&mut self.workspace.active_dataset_idx, idx, name);
-                }
-            });
+        if add_new_ds {
+            let name = if self.new_dataset_name_input.trim().is_empty() {
+                format!("data_{}", self.workspace.datasets.len() + 1)
+            } else {
+                self.new_dataset_name_input.trim().to_string()
+            };
+            self.workspace.datasets.push(DataTable::from_csv_str(
+                name,
+                "x,y\n1.0,2.0\n2.0,4.0\n3.0,6.0",
+                Color32::from_rgb(56, 189, 248),
+            ));
+            self.workspace.active_dataset_idx = self.workspace.datasets.len() - 1;
+        }
+        if gen_from_fn {
+            self.generate_dataset_from_primary_fn();
+        }
 
-            let active_idx = self.workspace.active_dataset_idx;
-            let ds = &mut self.workspace.datasets[active_idx];
-
-            ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut ds.show_on_plot, "Plot Scatter");
-                ui.checkbox(&mut ds.show_ols_line, "OLS Fit");
-                ui.color_edit_button_srgba(&mut ds.color);
-                if ui.small_button("+ Row").clicked() {
-                    ds.points.push([0.0_f64, 0.0_f64]);
-                    ds.sync_raw_csv_from_points();
-                }
-                if ui.small_button("Export CSV").clicked() {
-                    let path = PathBuf::from(format!("exports/{}.csv", ds.name));
-                    if save_text_file(&path, &ds.raw_csv).is_ok() {
-                        self.status_banner = format!("Exported dataset to {:?}", path);
-                    }
-                }
-            });
-
-            if let Some((b1, b0, r2)) = Self::compute_points_ols(&ds.points) {
-                ui.label(
-                    RichText::new(format!(
-                        "n = {} | OLS: y = {:.4}x + {:.4} (R² = {:.4})",
-                        ds.points.len(),
-                        b1,
-                        b0,
-                        r2
-                    ))
-                    .font(FontId::monospace(11.5_f32))
-                    .color(pal.accent_green),
-                );
-            }
-
-            ui.separator();
-
-            let avail_h = ui.available_height().max(160.0_f32);
-            ui.allocate_ui(Vec2::new(ui.available_width(), avail_h * 0.52_f32), |ui| {
-                egui::ScrollArea::vertical()
-                    .id_source("active_dataset_table_scroll")
-                    .show(ui, |ui| {
-                        let mut changed_cell = false;
-                        let mut delete_row: Option<usize> = None;
-                        egui::Grid::new("dataset_interactive_grid")
-                            .striped(true)
-                            .spacing([10.0_f32, 4.0_f32])
-                            .show(ui, |ui| {
-                                ui.label(RichText::new("#").strong().color(pal.text_muted));
-                                ui.label(RichText::new("x").strong().color(pal.accent_blue));
-                                ui.label(RichText::new("y").strong().color(pal.accent_green));
-                                ui.label("");
-                                ui.end_row();
-
-                                for (r_idx, pt) in ds.points.iter_mut().enumerate() {
-                                    ui.monospace(format!("{:02}", r_idx + 1));
-                                    changed_cell |= ui
-                                        .add(egui::DragValue::new(&mut pt[0]).speed(0.1_f64))
-                                        .changed();
-                                    changed_cell |= ui
-                                        .add(egui::DragValue::new(&mut pt[1]).speed(0.1_f64))
-                                        .changed();
-                                    if ui.small_button("×").clicked() {
-                                        delete_row = Some(r_idx);
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-                        if let Some(r) = delete_row {
-                            ds.points.remove(r);
-                            ds.sync_raw_csv_from_points();
-                        } else if changed_cell {
-                            ds.sync_raw_csv_from_points();
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.new_dataset_name_input)
+                            .font(FontId::monospace(11.2_f32))
+                            .desired_width(84.0_f32)
+                            .hint_text("dataset_name"),
+                    );
+                    for idx in 0..self.workspace.datasets.len() {
+                        let name = self.workspace.datasets[idx].name.clone();
+                        let sel = self.workspace.active_dataset_idx == idx;
+                        if ui.add(pill_button(&name, sel, pal)).clicked() {
+                            self.workspace.active_dataset_idx = idx;
                         }
-                    });
-            });
-
-            ui.separator();
-            ui.label(
-                RichText::new("Raw CSV Pasteboard (Edit or Paste from Excel/R):")
-                    .font(FontId::proportional(11.5_f32))
-                    .color(pal.text_secondary),
-            );
-            egui::ScrollArea::vertical()
-                .id_source("raw_csv_editor_scroll")
-                .show(ui, |ui| {
-                    if ui
-                        .add_sized(
-                            ui.available_size(),
-                            egui::TextEdit::multiline(&mut ds.raw_csv)
-                                .code_editor()
-                                .desired_width(f32::INFINITY),
-                        )
-                        .changed()
-                    {
-                        ds.sync_from_raw_csv();
                     }
                 });
-        }
+
+                if !self.workspace.datasets.is_empty() {
+                    let active_idx = self.workspace.active_dataset_idx;
+                    let ds = &mut self.workspace.datasets[active_idx];
+
+                    if add_row {
+                        ds.points.push([0.0_f64, 0.0_f64]);
+                        ds.sync_raw_csv_from_points();
+                    }
+                    if export_csv {
+                        let path = PathBuf::from(format!("exports/{}.csv", ds.name));
+                        if save_text_file(&path, &ds.raw_csv).is_ok() {
+                            self.status_banner = format!("Exported dataset to {:?}", path);
+                        }
+                    }
+
+                    if let Some((b1, b0, r2)) = Self::compute_points_ols(&ds.points) {
+                        ui.add_space(3.0_f32);
+                        ui.label(
+                            RichText::new(format!(
+                                "n={} | y = {:.3}x + {:.3} (R²={:.3})",
+                                ds.points.len(),
+                                b1,
+                                b0,
+                                r2
+                            ))
+                            .font(FontId::monospace(11.0_f32))
+                            .color(pal.accent_green),
+                        );
+                    }
+
+                    ui.add_space(4.0_f32);
+
+                    if self.dataset_show_raw_csv {
+                        ui.label(
+                            RichText::new("Raw CSV Pasteboard (Edit or Paste from Excel/R):")
+                                .font(FontId::proportional(11.0_f32))
+                                .color(pal.text_secondary),
+                        );
+                        egui::ScrollArea::vertical()
+                            .id_source("raw_csv_editor_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if ui
+                                    .add_sized(
+                                        ui.available_size().max(Vec2::new(100.0_f32, 90.0_f32)),
+                                        egui::TextEdit::multiline(&mut ds.raw_csv)
+                                            .code_editor()
+                                            .desired_width(f32::INFINITY),
+                                    )
+                                    .changed()
+                                {
+                                    ds.sync_from_raw_csv();
+                                }
+                            });
+                    } else {
+                        egui::ScrollArea::vertical()
+                            .id_source("active_dataset_table_scroll")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                let mut changed_cell = false;
+                                let mut delete_row: Option<usize> = None;
+                                egui::Grid::new("dataset_interactive_grid")
+                                    .striped(true)
+                                    .spacing([10.0_f32, 4.0_f32])
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new("#").strong().color(pal.text_muted));
+                                        ui.label(
+                                            RichText::new("x").strong().color(pal.accent_blue),
+                                        );
+                                        ui.label(
+                                            RichText::new("y").strong().color(pal.accent_green),
+                                        );
+                                        ui.label("");
+                                        ui.end_row();
+
+                                        for (r_idx, pt) in ds.points.iter_mut().enumerate() {
+                                            ui.monospace(format!("{:02}", r_idx + 1));
+                                            changed_cell |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut pt[0]).speed(0.1_f64),
+                                                )
+                                                .changed();
+                                            changed_cell |= ui
+                                                .add(
+                                                    egui::DragValue::new(&mut pt[1]).speed(0.1_f64),
+                                                )
+                                                .changed();
+                                            if ui
+                                                .add(header_icon_button("×", pal.accent_red))
+                                                .clicked()
+                                            {
+                                                delete_row = Some(r_idx);
+                                            }
+                                            ui.end_row();
+                                        }
+                                    });
+                                if let Some(r) = delete_row {
+                                    ds.points.remove(r);
+                                    ds.sync_raw_csv_from_points();
+                                } else if changed_cell {
+                                    ds.sync_raw_csv_from_points();
+                                }
+                            });
+                    }
+                }
+            });
     }
 
     fn render_notes_and_reports_ui(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(
-                RichText::new("Markdown / Quarto / RMarkdown Notes")
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("🗗 Pop-Out").clicked() {
-                    self.floating_notes_window = !self.floating_notes_window;
-                }
-                ui.selectable_value(&mut self.notes_preview_mode, true, "👁 Reader");
-                ui.selectable_value(&mut self.notes_preview_mode, false, "✏ Edit");
-            });
-        });
-
-        ui.horizontal_wrapped(|ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut self.file_io_path_input)
-                    .desired_width(145.0_f32)
-                    .hint_text("exports/notes.qmd"),
-            );
-            if ui.small_button("📂 Import").clicked() {
+        render_card_sub_toolbar(ui, pal, |ui| {
+            ui.selectable_value(&mut self.notes_preview_mode, false, "✏ Edit");
+            ui.selectable_value(&mut self.notes_preview_mode, true, "👁 Reader");
+            if ui.add(pill_button("📂", false, pal)).on_hover_text("Import file").clicked() {
                 let path = PathBuf::from(self.file_io_path_input.trim());
                 match load_text_file(&path) {
                     Ok(txt) => {
@@ -4860,18 +5912,11 @@ print(p_main)
                     Err(e) => self.status_banner = e,
                 }
             }
-            if ui.small_button("💾 Save File").clicked() {
-                let path = PathBuf::from(self.file_io_path_input.trim());
-                match save_text_file(&path, &self.workspace.markdown_notes) {
-                    Ok(()) => {
-                        self.status_banner = format!("Saved notes to {:?}", path);
-                        self.refresh_project_files();
-                    }
-                    Err(e) => self.status_banner = e,
-                }
+            if ui.add(pill_button("💾", false, pal)).on_hover_text("Save notes file").clicked() {
+                self.save_notes_default();
             }
             if ui
-                .small_button("+ Insert LaTeX")
+                .add(pill_button("+ LaTeX", false, pal))
                 .on_hover_text("Append current LaTeX derivation block to notes")
                 .clicked()
             {
@@ -4881,161 +5926,170 @@ print(p_main)
             }
         });
 
-        ui.separator();
-
-        let editor_h = (ui.available_height() - 68.0_f32).max(120.0_f32);
-        egui::ScrollArea::vertical()
-            .id_source("notes_markdown_scroll")
-            .max_height(editor_h)
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
             .show(ui, |ui| {
-                if self.notes_preview_mode {
-                    for line in self.workspace.markdown_notes.lines() {
-                        if let Some(h1) = line.strip_prefix("# ") {
-                            ui.label(
-                                RichText::new(h1)
-                                    .font(FontId::proportional(16.5_f32))
-                                    .strong()
-                                    .color(pal.accent_blue),
-                            );
-                        } else if let Some(h2) = line.strip_prefix("## ") {
-                            ui.label(
-                                RichText::new(h2)
-                                    .font(FontId::proportional(14.5_f32))
-                                    .strong()
-                                    .color(pal.accent_purple),
-                            );
-                        } else if let Some(h3) = line.strip_prefix("### ") {
-                            ui.label(
-                                RichText::new(h3)
-                                    .font(FontId::proportional(13.5_f32))
-                                    .strong()
-                                    .color(pal.text_primary),
-                            );
-                        } else {
-                            ui.label(RichText::new(line).color(pal.text_primary));
-                        }
-                    }
-                } else {
-                    ui.add_sized(
-                        Vec2::new(ui.available_width(), editor_h),
-                        egui::TextEdit::multiline(&mut self.workspace.markdown_notes)
-                            .desired_width(f32::INFINITY)
-                            .hint_text(
-                                "Write Markdown, Quarto (.qmd), or RMarkdown (.Rmd) notes...",
-                            ),
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.file_io_path_input)
+                            .font(FontId::monospace(11.2_f32))
+                            .desired_width((ui.available_width() - 8.0_f32).max(100.0_f32))
+                            .hint_text("exports/notes.qmd"),
                     );
+                });
+                ui.add_space(4.0_f32);
+
+                let editor_h = (ui.available_height() - 62.0_f32).max(80.0_f32);
+                egui::ScrollArea::vertical()
+                    .id_source("notes_markdown_scroll")
+                    .max_height(editor_h)
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        if self.notes_preview_mode {
+                            for line in self.workspace.markdown_notes.lines() {
+                                if let Some(h1) = line.strip_prefix("# ") {
+                                    ui.label(
+                                        RichText::new(h1)
+                                            .font(FontId::proportional(15.5_f32))
+                                            .strong()
+                                            .color(pal.accent_blue),
+                                    );
+                                } else if let Some(h2) = line.strip_prefix("## ") {
+                                    ui.label(
+                                        RichText::new(h2)
+                                            .font(FontId::proportional(13.8_f32))
+                                            .strong()
+                                            .color(pal.accent_purple),
+                                    );
+                                } else if let Some(h3) = line.strip_prefix("### ") {
+                                    ui.label(
+                                        RichText::new(h3)
+                                            .font(FontId::proportional(13.0_f32))
+                                            .strong()
+                                            .color(pal.text_primary),
+                                    );
+                                } else {
+                                    ui.label(RichText::new(line).color(pal.text_primary));
+                                }
+                            }
+                        } else {
+                            ui.add_sized(
+                                Vec2::new(ui.available_width(), editor_h),
+                                egui::TextEdit::multiline(&mut self.workspace.markdown_notes)
+                                    .desired_width(f32::INFINITY)
+                                    .hint_text(
+                                        "Write Markdown, Quarto (.qmd), or RMarkdown (.Rmd) notes...",
+                                    ),
+                            );
+                        }
+                    });
+
+                ui.add_space(4.0_f32);
+                ui.horizontal_wrapped(|ui| {
+                    for fmt in [
+                        ReportFormat::QuartoQmd,
+                        ReportFormat::RMarkdownRmd,
+                        ReportFormat::MarkdownMd,
+                    ] {
+                        ui.selectable_value(&mut self.report_format, fmt, fmt.label());
+                    }
+                });
+                if ui
+                    .add(
+                        egui::Button::new(
+                            RichText::new("🚀 Export Bundle & Open Positron")
+                                .strong()
+                                .color(pal.accent_green),
+                        )
+                        .fill(pal.pill_bg)
+                        .stroke(Stroke::new(1.0_f32, pal.border))
+                        .rounding(Rounding::same(6.0_f32)),
+                    )
+                    .clicked()
+                {
+                    self.trigger_export_pipeline();
                 }
             });
-
-        ui.separator();
-        ui.horizontal_wrapped(|ui| {
-            for fmt in [
-                ReportFormat::QuartoQmd,
-                ReportFormat::RMarkdownRmd,
-                ReportFormat::MarkdownMd,
-            ] {
-                ui.selectable_value(&mut self.report_format, fmt, fmt.label());
-            }
-        });
-        if ui
-            .button(
-                RichText::new("🚀 Export Bundle & Open Positron")
-                    .strong()
-                    .color(pal.accent_green),
-            )
-            .clicked()
-        {
-            self.trigger_export_pipeline();
-        }
     }
 
     fn render_analysis_and_latex_ui(&mut self, ui: &mut Ui, pal: ThemePalette) {
         let mut latex_str = self.generate_latex_derivation();
         let mut r_str = self.generate_r_script_preview();
 
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("Copy LaTeX / TikZ").clicked() {
+        render_card_sub_toolbar(ui, pal, |ui| {
+            if ui.add(pill_button("📋 Copy LaTeX / TikZ", false, pal)).clicked() {
                 ui.ctx().copy_text(latex_str.clone());
                 self.status_banner = "Copied LaTeX derivation to clipboard.".to_string();
             }
-            if ui.button("Copy R Script").clicked() {
+            if ui.add(pill_button("📋 Copy R Script", false, pal)).clicked() {
                 ui.ctx().copy_text(r_str.clone());
                 self.status_banner = "Copied R script to clipboard.".to_string();
             }
         });
-        ui.separator();
 
-        egui::ScrollArea::vertical()
-            .id_source("analysis_latex_r_scroll")
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
             .show(ui, |ui| {
-                ui.label(
-                    RichText::new("Auto-Derived LaTeX & TikZ")
-                        .strong()
-                        .color(pal.accent_blue),
-                );
-                ui.add_sized(
-                    Vec2::new(ui.available_width(), 200.0_f32),
-                    egui::TextEdit::multiline(&mut latex_str)
-                        .code_editor()
-                        .desired_width(f32::INFINITY),
-                );
-                ui.add_space(6.0_f32);
-                ui.label(
-                    RichText::new("Reproducible R / ggplot2 Script")
-                        .strong()
-                        .color(pal.accent_green),
-                );
-                ui.add_sized(
-                    Vec2::new(ui.available_width(), 200.0_f32),
-                    egui::TextEdit::multiline(&mut r_str)
-                        .code_editor()
-                        .desired_width(f32::INFINITY),
-                );
+                egui::ScrollArea::vertical()
+                    .id_source("analysis_latex_r_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.label(
+                            RichText::new("Auto-Derived LaTeX & TikZ")
+                                .strong()
+                                .color(pal.accent_blue),
+                        );
+                        ui.add_sized(
+                            Vec2::new(ui.available_width(), 165.0_f32),
+                            egui::TextEdit::multiline(&mut latex_str)
+                                .code_editor()
+                                .desired_width(f32::INFINITY),
+                        );
+                        ui.add_space(6.0_f32);
+                        ui.label(
+                            RichText::new("Reproducible R / ggplot2 Script")
+                                .strong()
+                                .color(pal.accent_green),
+                        );
+                        ui.add_sized(
+                            Vec2::new(ui.available_width(), 165.0_f32),
+                            egui::TextEdit::multiline(&mut r_str)
+                                .code_editor()
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
             });
     }
 
     fn render_help_center_ui(&mut self, ui: &mut Ui, pal: ThemePalette) {
-        ui.horizontal(|ui| {
-            ui.label(
-                RichText::new("Help & Reference (`intro-help` & `general-help`)")
-                    .strong()
-                    .color(pal.accent_blue),
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.small_button("🗗 Pop-Out").clicked() {
-                    self.floating_help_window = !self.floating_help_window;
-                }
-            });
-        });
-        ui.separator();
-
-        egui::ScrollArea::vertical()
-            .id_source("help_center_scroll")
+        egui::Frame::none()
+            .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
             .show(ui, |ui| {
-                egui::Frame::group(ui.style())
-                    .fill(pal.card_bg)
-                    .rounding(Rounding::same(6.0_f32))
-                    .inner_margin(Margin::same(8.0_f32))
+                egui::ScrollArea::vertical()
+                    .id_source("help_center_scroll")
+                    .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.monospace(
-                            RichText::new(Self::intro_help_text()).color(pal.text_primary),
-                        );
-                    });
-                ui.add_space(8.0_f32);
-                egui::Frame::group(ui.style())
-                    .fill(pal.card_bg)
-                    .rounding(Rounding::same(6.0_f32))
-                    .inner_margin(Margin::same(8.0_f32))
-                    .show(ui, |ui| {
-                        ui.monospace(
-                            RichText::new(Self::general_help_text()).color(pal.text_primary),
-                        );
+                        capsule_frame(pal, pal.border).show(ui, |ui| {
+                            ui.monospace(
+                                RichText::new(Self::intro_help_text())
+                                    .font(FontId::monospace(11.2_f32))
+                                    .color(pal.text_primary),
+                            );
+                        });
+                        ui.add_space(6.0_f32);
+                        capsule_frame(pal, pal.border).show(ui, |ui| {
+                            ui.monospace(
+                                RichText::new(Self::general_help_text())
+                                    .font(FontId::monospace(11.2_f32))
+                                    .color(pal.text_primary),
+                            );
+                        });
                     });
             });
     }
 
     // =========================================================================
-    // FLOATING WINDOWS (DATASETS, NOTES, HELP)
+    // FLOATING POP-OUT WINDOWS (DATASETS, NOTES, HELP, ENVIRONMENT, CONSOLE)
     // =========================================================================
 
     fn render_floating_windows(&mut self, ctx: &egui::Context) {
@@ -5043,9 +6097,9 @@ print(p_main)
 
         if self.floating_datasets_window {
             let mut open = self.floating_datasets_window;
-            egui::Window::new("📊 Datasets Manager")
+            egui::Window::new("📊 Data Viewer & Datasets Manager")
                 .open(&mut open)
-                .default_size([480.0_f32, 420.0_f32])
+                .default_size([500.0_f32, 430.0_f32])
                 .resizable(true)
                 .show(ctx, |ui| {
                     self.render_datasets_manager_ui(ui, pal);
@@ -5076,51 +6130,153 @@ print(p_main)
                 });
             self.floating_help_window = open;
         }
+
+        if self.floating_env_window {
+            let mut open = self.floating_env_window;
+            egui::Window::new("📦 R Environment Inspector")
+                .open(&mut open)
+                .default_size([360.0_f32, 420.0_f32])
+                .resizable(true)
+                .show(ctx, |ui| {
+                    self.render_environment_body(ui, pal);
+                });
+            self.floating_env_window = open;
+        }
+
+        if self.floating_console_window {
+            let mut open = self.floating_console_window;
+            egui::Window::new("⚡ Console / Script / Settings")
+                .open(&mut open)
+                .default_size([560.0_f32, 340.0_f32])
+                .resizable(true)
+                .show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(
+                            &mut self.bottom_tab,
+                            BottomDockTab::QuickConsole,
+                            "Console",
+                        );
+                        ui.selectable_value(
+                            &mut self.bottom_tab,
+                            BottomDockTab::ScriptEditor,
+                            "Script",
+                        );
+                        ui.selectable_value(
+                            &mut self.bottom_tab,
+                            BottomDockTab::NumericAndGraphSettings,
+                            "Settings",
+                        );
+                    });
+                    ui.separator();
+                    self.render_bottom_dock_body(ui, pal);
+                });
+            self.floating_console_window = open;
+        }
     }
 }
 
 impl eframe::App for EconCalcApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let pal = self.palette();
         let screen_w = ctx.screen_rect().width().max(640.0_f32);
         let screen_h = ctx.screen_rect().height().max(480.0_f32);
 
-        egui::TopBottomPanel::top("positron_top_header").show(ctx, |ui| {
-            self.render_top_header(ui);
-        });
+        // ---- 2-Tier Top Header ----
+        egui::TopBottomPanel::top("bento_top_header")
+            .frame(
+                egui::Frame::none()
+                    .fill(pal.card_bg)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .inner_margin(Margin::symmetric(8.0_f32, 4.0_f32)),
+            )
+            .show(ctx, |ui| {
+                self.render_top_header(ui);
+            });
 
+        // ---- Left Bento Column (Card 1: Symbolic + Card 2: Files / Models) ----
         if self.show_left_panel && !self.maximize_graph {
-            egui::SidePanel::left("symbolic_environment_left_panel")
+            egui::SidePanel::left("bento_left_column")
                 .resizable(true)
-                .default_width((screen_w * 0.22_f32).clamp(240.0_f32, 320.0_f32))
-                .width_range(200.0_f32..=(screen_w * 0.36_f32).max(260.0_f32))
+                .default_width((screen_w * 0.24_f32).clamp(245.0_f32, 340.0_f32))
+                .width_range(210.0_f32..=(screen_w * 0.38_f32).max(260.0_f32))
+                .frame(
+                    egui::Frame::none()
+                        .fill(pal.outer_bg)
+                        .inner_margin(Margin {
+                            left: 6.0_f32,
+                            right: 3.0_f32,
+                            top: 6.0_f32,
+                            bottom: 6.0_f32,
+                        }),
+                )
                 .show(ctx, |ui| {
-                    self.render_left_sidebar(ui);
+                    self.render_left_column(ui);
                 });
         }
 
+        // ---- Right Bento Column (Card 5A: Environment + Card 5B: Data Viewer / Notes / LaTeX / Help) ----
         if self.show_right_panel && !self.maximize_graph {
-            egui::SidePanel::right("data_docs_right_panel")
+            egui::SidePanel::right("bento_right_column")
                 .resizable(true)
-                .default_width((screen_w * 0.25_f32).clamp(250.0_f32, 350.0_f32))
-                .width_range(220.0_f32..=(screen_w * 0.38_f32).max(280.0_f32))
+                .default_width((screen_w * 0.24_f32).clamp(245.0_f32, 350.0_f32))
+                .width_range(215.0_f32..=(screen_w * 0.38_f32).max(260.0_f32))
+                .frame(
+                    egui::Frame::none()
+                        .fill(pal.outer_bg)
+                        .inner_margin(Margin {
+                            left: 3.0_f32,
+                            right: 6.0_f32,
+                            top: 6.0_f32,
+                            bottom: 6.0_f32,
+                        }),
+                )
                 .show(ctx, |ui| {
-                    self.render_right_dock(ui);
+                    self.render_right_column(ui);
                 });
         }
 
+        // ---- Center Bottom Bento Card (Card 4: Console | Script | Settings) ----
+        // Declared AFTER Left and Right SidePanels so it occupies strictly the bottom of the Center column!
         if self.show_bottom_panel && !self.maximize_graph {
-            egui::TopBottomPanel::bottom("bottom_console_and_editor_dock")
+            egui::TopBottomPanel::bottom("bento_center_bottom_card")
                 .resizable(true)
-                .default_height((screen_h * 0.27_f32).clamp(150.0_f32, 240.0_f32))
-                .height_range(110.0_f32..=(screen_h * 0.55_f32).max(200.0_f32))
+                .default_height((screen_h * 0.29_f32).clamp(155.0_f32, 260.0_f32))
+                .height_range(115.0_f32..=(screen_h * 0.56_f32).max(200.0_f32))
+                .frame(
+                    egui::Frame::none()
+                        .fill(pal.outer_bg)
+                        .inner_margin(Margin {
+                            left: 3.0_f32,
+                            right: 3.0_f32,
+                            top: 3.0_f32,
+                            bottom: 6.0_f32,
+                        }),
+                )
                 .show(ctx, |ui| {
                     self.render_bottom_dock(ui);
                 });
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_center_viewport(ui);
-        });
+        // ---- Center Top Bento Card (Card 3: Graph Viewport 2D/3D) ----
+        let center_margin = if self.maximize_graph {
+            Margin::same(6.0_f32)
+        } else {
+            Margin {
+                left: if self.show_left_panel { 3.0_f32 } else { 6.0_f32 },
+                right: if self.show_right_panel { 3.0_f32 } else { 6.0_f32 },
+                top: 6.0_f32,
+                bottom: if self.show_bottom_panel { 3.0_f32 } else { 6.0_f32 },
+            }
+        };
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::none()
+                    .fill(pal.outer_bg)
+                    .inner_margin(center_margin),
+            )
+            .show(ctx, |ui| {
+                self.render_center_viewport(ui);
+            });
 
         self.render_floating_windows(ctx);
     }
@@ -5156,13 +6312,23 @@ mod tests {
             show_right_panel: true,
             show_bottom_panel: true,
             maximize_graph: false,
+            symbolic_card_collapsed: false,
+            left_bottom_collapsed: false,
+            env_card_collapsed: false,
+            right_bottom_collapsed: false,
+            symbolic_functions_open: true,
+            symbolic_sliders_open: true,
+            dataset_show_raw_csv: false,
             floating_datasets_window: false,
             floating_notes_window: false,
             floating_help_window: false,
+            floating_env_window: false,
+            floating_console_window: false,
             active_model: ActiveModelKind::CustomExpression,
             viewport_mode: ViewportMode::Plot2D,
             axis_zoom_mode: AxisZoomMode::BothXY,
-            left_tab: LeftSidebarTab::FormulasAndSliders,
+            left_bottom_tab: LeftBottomTab::Files,
+            file_filter: FileFilterKind::All,
             bottom_tab: BottomDockTab::QuickConsole,
             right_tab: RightDockTab::Datasets,
             selected_snippet: SnippetTemplate::AsymptoticRational,
@@ -5262,13 +6428,23 @@ mod tests {
             show_right_panel: true,
             show_bottom_panel: true,
             maximize_graph: false,
+            symbolic_card_collapsed: false,
+            left_bottom_collapsed: false,
+            env_card_collapsed: false,
+            right_bottom_collapsed: false,
+            symbolic_functions_open: true,
+            symbolic_sliders_open: true,
+            dataset_show_raw_csv: false,
             floating_datasets_window: false,
             floating_notes_window: false,
             floating_help_window: false,
+            floating_env_window: false,
+            floating_console_window: false,
             active_model: ActiveModelKind::CustomExpression,
             viewport_mode: ViewportMode::Plot2D,
             axis_zoom_mode: AxisZoomMode::BothXY,
-            left_tab: LeftSidebarTab::FormulasAndSliders,
+            left_bottom_tab: LeftBottomTab::Files,
+            file_filter: FileFilterKind::All,
             bottom_tab: BottomDockTab::QuickConsole,
             right_tab: RightDockTab::Datasets,
             selected_snippet: SnippetTemplate::CobbDouglas,

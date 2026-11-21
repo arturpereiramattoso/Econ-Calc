@@ -1545,9 +1545,9 @@ pub fn render_math_preview_strip(
     let build = build_preview_layout(&measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color);
 
     let pad_x = 8.0_f32;
-    let pad_y = 5.0_f32;
+    let pad_y = 4.0_f32;
     let desired_w = ui.available_width().max(build.layout.width + 2.0_f32 * pad_x);
-    let desired_h = (build.layout.height() + 2.0_f32 * pad_y).max(base_size + 10.0_f32);
+    let desired_h = (build.layout.height() + 2.0_f32 * pad_y).max(base_size + 8.0_f32);
 
     let (rect, _resp) = ui.allocate_exact_size(Vec2::new(desired_w, desired_h), Sense::hover());
     let stroke_color = if build.error.is_some() {
@@ -1557,8 +1557,8 @@ pub fn render_math_preview_strip(
     };
 
     let painter = ui.painter_at(rect.intersect(ui.clip_rect()));
-    painter.rect_filled(rect, Rounding::same(4.0_f32), bg_color);
-    painter.rect_stroke(rect, Rounding::same(4.0_f32), Stroke::new(1.0_f32, stroke_color));
+    painter.rect_filled(rect, Rounding::same(6.0_f32), bg_color);
+    painter.rect_stroke(rect, Rounding::same(6.0_f32), Stroke::new(1.0_f32, stroke_color));
 
     let content_h = build.layout.height();
     let top_offset = (rect.height() - content_h) * 0.5_f32;
