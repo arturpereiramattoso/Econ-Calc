@@ -53,7 +53,10 @@ pub fn collect_called_functions(expr: &SpannedExpr, out: &mut HashSet<String>) {
                 collect_called_functions(a, out);
             }
         }
-        MathExpr::Number(_) | MathExpr::Ident(_) | MathExpr::MemberAccess { .. } => {}
+        MathExpr::Number(_)
+        | MathExpr::Ident(_)
+        | MathExpr::Placeholder
+        | MathExpr::MemberAccess { .. } => {}
         MathExpr::Subscript { base, sub } => {
             collect_called_functions(base, out);
             collect_called_functions(sub, out);
@@ -104,6 +107,15 @@ pub fn collect_called_functions(expr: &SpannedExpr, out: &mut HashSet<String>) {
                     collect_called_functions(c, out);
                 }
                 collect_called_functions(&b.value, out);
+            }
+        }
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            collect_called_functions(inner, out);
+            for r in restrictions {
+                collect_called_functions(r, out);
             }
         }
         MathExpr::Tuple(items) => {
@@ -238,7 +250,7 @@ pub fn discover_unbound_symbols(
         };
 
         match &node.expr {
-            MathExpr::Number(_) => {}
+            MathExpr::Number(_) | MathExpr::Placeholder => {}
             MathExpr::Ident(name) => maybe_record(name),
             MathExpr::Accent { .. } | MathExpr::Subscript { .. } => {
                 if let Some(canon) = node.as_canonical_ident() {
@@ -276,6 +288,13 @@ pub fn discover_unbound_symbols(
                 walk(radicand, locals, known_fns, existing_params, existing_r_objects, found, seen);
             }
             MathExpr::Call { name, args, .. } => {
+                // Skip function-reference arguments in economics/calculus meta-operators
+                let fn_arg_skip = match name.as_str() {
+                    "tangent" | "elasticity" | "marginal" | "average" => 1,
+                    "epsilon" if args.len() == 2 => 1,
+                    "area" | "surplus" => 2,
+                    _ => 0,
+                };
                 // If a 1-arg call uses an unknown symbol, only treat it as a free parameter
                 // if it isn't a known/builtin function (e.g. `a(x+1)`).
                 if args.len() == 1
@@ -285,7 +304,10 @@ pub fn discover_unbound_symbols(
                 {
                     maybe_record(name);
                 }
-                for a in args {
+                for (i, a) in args.iter().enumerate() {
+                    if i < fn_arg_skip && a.as_canonical_ident().is_some() {
+                        continue;
+                    }
                     walk(a, locals, known_fns, existing_params, existing_r_objects, found, seen);
                 }
             }
@@ -334,6 +356,15 @@ pub fn discover_unbound_symbols(
                         walk(c, locals, known_fns, existing_params, existing_r_objects, found, seen);
                     }
                     walk(&b.value, locals, known_fns, existing_params, existing_r_objects, found, seen);
+                }
+            }
+            MathExpr::Restricted {
+                inner,
+                restrictions,
+            } => {
+                walk(inner, locals, known_fns, existing_params, existing_r_objects, found, seen);
+                for r in restrictions {
+                    walk(r, locals, known_fns, existing_params, existing_r_objects, found, seen);
                 }
             }
             MathExpr::Tuple(items) => {

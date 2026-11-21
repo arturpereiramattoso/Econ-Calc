@@ -170,6 +170,17 @@ impl SpannedExpr {
         expr_to_latex(&self.expr, 0)
     }
 
+    /// Converts this AST node back into clean canonical EconCalc/Desmos symbolic syntax
+    /// (used for two-way live LaTeX <-> Symbolic editing).
+    pub fn to_symbolic(&self) -> String {
+        expr_to_symbolic(&self.expr, 0)
+    }
+
+    /// Returns `true` if this AST contains any structural typing placeholder slot (`□`).
+    pub fn has_placeholder(&self) -> bool {
+        expr_has_placeholder(&self.expr)
+    }
+
     /// Returns a canonical identifier string if this expression is an identifier or `\bar{Y}`-style accent.
     pub fn as_canonical_ident(&self) -> Option<String> {
         match &self.expr {
@@ -288,6 +299,13 @@ pub enum MathExpr {
         rest: Vec<(CmpOp, SpannedExpr)>,
     },
     Piecewise(Vec<PiecewiseBranch>),
+    /// Inline Desmos-style domain/range restriction: `expr { cond1, cond2 }`
+    Restricted {
+        inner: Box<SpannedExpr>,
+        restrictions: Vec<SpannedExpr>,
+    },
+    /// Active visual placeholder slot (`□`) for structural mid-typing previews.
+    Placeholder,
     Tuple(Vec<SpannedExpr>),
     MemberAccess {
         object: String,
@@ -375,6 +393,67 @@ impl MathStatement {
                 }
             }
             MathStatement::Expr(expr) => expr.to_latex(),
+        }
+    }
+
+    /// Converts this statement back into canonical EconCalc/Desmos symbolic syntax.
+    pub fn to_symbolic(&self) -> String {
+        match self {
+            MathStatement::FunctionDef { name, params, body } => {
+                let p_str: Vec<String> = params.iter().map(|p| ident_to_symbolic(p)).collect();
+                format!(
+                    "{}({}) = {}",
+                    ident_to_symbolic(name),
+                    p_str.join(", "),
+                    body.to_symbolic()
+                )
+            }
+            MathStatement::ParamAssign { name, value } => {
+                format!("{} = {}", ident_to_symbolic(name), value.to_symbolic())
+            }
+            MathStatement::Equation { lhs, rhs } => {
+                format!("{} = {}", lhs.to_symbolic(), rhs.to_symbolic())
+            }
+            MathStatement::Inequality { lhs, op, rhs } => {
+                format!("{} {} {}", lhs.to_symbolic(), op.as_unicode(), rhs.to_symbolic())
+            }
+            MathStatement::Parametric {
+                name,
+                param,
+                x_expr,
+                y_expr,
+            } => {
+                let tuple = format!("({}, {})", x_expr.to_symbolic(), y_expr.to_symbolic());
+                if let Some(n) = name {
+                    format!("{}({}) = {}", ident_to_symbolic(n), ident_to_symbolic(param), tuple)
+                } else {
+                    tuple
+                }
+            }
+            MathStatement::Polar { param, r_expr } => {
+                if param == "theta" {
+                    format!("r = {}", r_expr.to_symbolic())
+                } else {
+                    format!("r({}) = {}", ident_to_symbolic(param), r_expr.to_symbolic())
+                }
+            }
+            MathStatement::Expr(expr) => expr.to_symbolic(),
+        }
+    }
+
+    /// Returns `true` if any sub-expression contains an incomplete placeholder slot (`□`).
+    pub fn has_placeholder(&self) -> bool {
+        match self {
+            MathStatement::FunctionDef { body, .. }
+            | MathStatement::ParamAssign { value: body, .. }
+            | MathStatement::Polar { r_expr: body, .. }
+            | MathStatement::Expr(body) => body.has_placeholder(),
+            MathStatement::Equation { lhs, rhs } | MathStatement::Inequality { lhs, rhs, .. } => {
+                lhs.has_placeholder() || rhs.has_placeholder()
+            }
+            MathStatement::Parametric { x_expr, y_expr, .. } => {
+                x_expr.has_placeholder() || y_expr.has_placeholder()
+            }
         }
     }
 }
@@ -481,16 +560,26 @@ pub fn ident_to_pretty_unicode(name: &str) -> String {
         return u.to_string();
     }
     if name == "price_x" {
-        return "Pₓ".to_string();
+        return "P_x".to_string();
     }
     if name == "price_y" {
-        return "Pᵧ".to_string();
+        return "P_y".to_string();
     }
     if let Some(base) = name.strip_suffix("_bar") {
-        return format!("{}\u{0304}", ident_to_pretty_unicode(base));
+        return format!("{}_bar", ident_to_pretty_unicode(base));
     }
     if let Some((base, sub)) = name.split_once('_') {
         return format!("{}_{}", ident_to_pretty_unicode(base), sub);
+    }
+    name.to_string()
+}
+
+pub fn ident_to_symbolic(name: &str) -> String {
+    if name == "price_x" || name == "price_y" {
+        return name.to_string();
+    }
+    if let Some(u) = greek_name_to_unicode(name) {
+        return u.to_string();
     }
     name.to_string()
 }
@@ -634,6 +723,9 @@ fn expr_to_latex(expr: &MathExpr, parent_prec: u8) -> String {
             if *prime_order == 0 && name == "sqrt" && args.len() == 1 {
                 return format!("\\sqrt{{{}}}", args_str[0]);
             }
+            if *prime_order == 0 && name == "nthroot" && args.len() == 2 {
+                return format!("\\sqrt[{}]{{{}}}", args_str[0], args_str[1]);
+            }
             if *prime_order == 0 && is_standard_latex_func(name) {
                 format!("\\{}\\left({}\\right)", name, args_str.join(", "))
             } else if *prime_order == 0 && matches!(name.as_str(), "asin" | "acos" | "atan") {
@@ -729,6 +821,21 @@ fn expr_to_latex(expr: &MathExpr, parent_prec: u8) -> String {
                 .collect();
             format!("\\begin{{cases}} {} \\end{{cases}}", rows.join(" \\\\ "))
         }
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            let conds: Vec<String> = restrictions
+                .iter()
+                .map(|c| expr_to_latex(&c.expr, 0))
+                .collect();
+            format!(
+                "{} \\left\\{{ {} \\right\\}}",
+                expr_to_latex(&inner.expr, 0),
+                conds.join(", ")
+            )
+        }
+        MathExpr::Placeholder => "\\square".to_string(),
         MathExpr::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(|e| expr_to_latex(&e.expr, 0)).collect();
             format!("\\left({}\\right)", parts.join(", "))
@@ -750,5 +857,298 @@ fn strip_outer_group(expr: &MathExpr) -> &MathExpr {
     match expr {
         MathExpr::Group(inner) => strip_outer_group(&inner.expr),
         other => other,
+    }
+}
+
+fn expr_has_placeholder(expr: &MathExpr) -> bool {
+    match expr {
+        MathExpr::Placeholder => true,
+        MathExpr::Number(_) | MathExpr::Ident(_) | MathExpr::MemberAccess { .. } => false,
+        MathExpr::Subscript { base, sub } => {
+            expr_has_placeholder(&base.expr) || expr_has_placeholder(&sub.expr)
+        }
+        MathExpr::Accent { inner, .. }
+        | MathExpr::Group(inner)
+        | MathExpr::Abs(inner)
+        | MathExpr::Unary { expr: inner, .. }
+        | MathExpr::Derivative { body: inner, .. } => expr_has_placeholder(&inner.expr),
+        MathExpr::Binary { lhs, rhs, .. } => {
+            expr_has_placeholder(&lhs.expr) || expr_has_placeholder(&rhs.expr)
+        }
+        MathExpr::Fraction { num, den } => {
+            expr_has_placeholder(&num.expr) || expr_has_placeholder(&den.expr)
+        }
+        MathExpr::Sqrt { index, radicand } => {
+            index
+                .as_ref()
+                .map(|i| expr_has_placeholder(&i.expr))
+                .unwrap_or(false)
+                || expr_has_placeholder(&radicand.expr)
+        }
+        MathExpr::Call { args, .. } | MathExpr::Tuple(args) => {
+            args.iter().any(|a| expr_has_placeholder(&a.expr))
+        }
+        MathExpr::Integral {
+            lower, upper, body, ..
+        }
+        | MathExpr::Sum {
+            lower, upper, body, ..
+        }
+        | MathExpr::Prod {
+            lower, upper, body, ..
+        } => {
+            expr_has_placeholder(&lower.expr)
+                || expr_has_placeholder(&upper.expr)
+                || expr_has_placeholder(&body.expr)
+        }
+        MathExpr::ComparisonChain { first, rest } => {
+            expr_has_placeholder(&first.expr)
+                || rest.iter().any(|(_, e)| expr_has_placeholder(&e.expr))
+        }
+        MathExpr::Piecewise(branches) => branches.iter().any(|b| {
+            b.condition
+                .as_ref()
+                .map(|c| expr_has_placeholder(&c.expr))
+                .unwrap_or(false)
+                || expr_has_placeholder(&b.value.expr)
+        }),
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            expr_has_placeholder(&inner.expr)
+                || restrictions.iter().any(|r| expr_has_placeholder(&r.expr))
+        }
+        MathExpr::Index { target, index } => {
+            expr_has_placeholder(&target.expr) || expr_has_placeholder(&index.expr)
+        }
+    }
+}
+
+fn expr_to_symbolic(expr: &MathExpr, parent_prec: u8) -> String {
+    match expr {
+        MathExpr::Number(n) => format_number_latex(*n),
+        MathExpr::Ident(name) => ident_to_symbolic(name),
+        MathExpr::Placeholder => String::new(),
+        MathExpr::Subscript { base, sub } => {
+            let b = expr_to_symbolic(&base.expr, 5);
+            let s = expr_to_symbolic(&sub.expr, 0);
+            if s.len() <= 1 || s.chars().all(|c| c.is_ascii_alphanumeric()) {
+                format!("{}_{}", b, s)
+            } else {
+                format!("{}_{{{}}}", b, s)
+            }
+        }
+        MathExpr::Accent { kind, inner } => {
+            let inner_s = expr_to_symbolic(&inner.expr, 0);
+            match kind {
+                AccentKind::Bar => format!("\\bar{{{}}}", inner_s),
+                AccentKind::Hat => format!("\\hat{{{}}}", inner_s),
+                AccentKind::Tilde => format!("\\tilde{{{}}}", inner_s),
+                AccentKind::Vec => format!("\\vec{{{}}}", inner_s),
+            }
+        }
+        MathExpr::Group(inner) => format!("({})", expr_to_symbolic(&inner.expr, 0)),
+        MathExpr::Abs(inner) => format!("|{}|", expr_to_symbolic(&inner.expr, 0)),
+        MathExpr::Unary { op, expr } => {
+            let inner = expr_to_symbolic(&expr.expr, 4);
+            match op {
+                UnaryOp::Neg => format!("-{}", inner),
+                UnaryOp::Pos => format!("+{}", inner),
+            }
+        }
+        MathExpr::Fraction { num, den } => {
+            let n = strip_outer_group(&num.expr);
+            let d = strip_outer_group(&den.expr);
+            let ns = match n {
+                MathExpr::Binary {
+                    op: BinOp::Add | BinOp::Sub,
+                    ..
+                } => format!("({})", expr_to_symbolic(n, 0)),
+                _ => expr_to_symbolic(n, 3),
+            };
+            let ds = match d {
+                MathExpr::Binary { .. } | MathExpr::Fraction { .. } => {
+                    format!("({})", expr_to_symbolic(d, 0))
+                }
+                _ => expr_to_symbolic(d, 4),
+            };
+            let s = format!("{} / {}", ns, ds);
+            if 2 < parent_prec {
+                format!("({})", s)
+            } else {
+                s
+            }
+        }
+        MathExpr::Sqrt { index, radicand } => {
+            let r = expr_to_symbolic(strip_outer_group(&radicand.expr), 0);
+            if let Some(idx) = index {
+                format!("nthroot({}, {})", expr_to_symbolic(&idx.expr, 0), r)
+            } else {
+                format!("sqrt({})", r)
+            }
+        }
+        MathExpr::Binary { op, lhs, rhs } => {
+            let prec = match op {
+                BinOp::Add | BinOp::Sub => 1,
+                BinOp::Mul | BinOp::ImplicitMul | BinOp::Mod => 2,
+                BinOp::Pow => 4,
+            };
+            let s = match op {
+                BinOp::Add => format!(
+                    "{} + {}",
+                    expr_to_symbolic(&lhs.expr, 1),
+                    expr_to_symbolic(&rhs.expr, 1)
+                ),
+                BinOp::Sub => format!(
+                    "{} - {}",
+                    expr_to_symbolic(&lhs.expr, 1),
+                    expr_to_symbolic(&rhs.expr, 2)
+                ),
+                BinOp::Mul => format!(
+                    "{} * {}",
+                    expr_to_symbolic(&lhs.expr, 2),
+                    expr_to_symbolic(&rhs.expr, 2)
+                ),
+                BinOp::ImplicitMul => format!(
+                    "{} * {}",
+                    expr_to_symbolic(&lhs.expr, 2),
+                    expr_to_symbolic(&rhs.expr, 2)
+                ),
+                BinOp::Mod => format!(
+                    "{} % {}",
+                    expr_to_symbolic(&lhs.expr, 2),
+                    expr_to_symbolic(&rhs.expr, 2)
+                ),
+                BinOp::Pow => {
+                    let base = expr_to_symbolic(&lhs.expr, 5);
+                    let exp_inner = strip_outer_group(&rhs.expr);
+                    let exp = match exp_inner {
+                        MathExpr::Number(_) | MathExpr::Ident(_) => expr_to_symbolic(exp_inner, 0),
+                        _ => format!("({})", expr_to_symbolic(exp_inner, 0)),
+                    };
+                    format!("{}^{}", base, exp)
+                }
+            };
+            if prec < parent_prec {
+                format!("({})", s)
+            } else {
+                s
+            }
+        }
+        MathExpr::Call {
+            name,
+            prime_order,
+            args,
+        } => {
+            let primes = "'".repeat(*prime_order as usize);
+            let args_str: Vec<String> = args.iter().map(|a| expr_to_symbolic(&a.expr, 0)).collect();
+            format!(
+                "{}{}({})",
+                ident_to_symbolic(name),
+                primes,
+                args_str.join(", ")
+            )
+        }
+        MathExpr::Derivative { var, order, body } => {
+            let b = expr_to_symbolic(&body.expr, 0);
+            if *order <= 1 {
+                format!("d/d{}({})", ident_to_symbolic(var), b)
+            } else {
+                format!(
+                    "\\frac{{d^{}}}{{d{}^{}}}({})",
+                    order,
+                    ident_to_symbolic(var),
+                    order,
+                    b
+                )
+            }
+        }
+        MathExpr::Integral {
+            var,
+            lower,
+            upper,
+            body,
+        } => format!(
+            "\\int_{{{}}}^{{{}}} {} d{}",
+            expr_to_symbolic(&lower.expr, 0),
+            expr_to_symbolic(&upper.expr, 0),
+            expr_to_symbolic(&body.expr, 0),
+            ident_to_symbolic(var)
+        ),
+        MathExpr::Sum {
+            var,
+            lower,
+            upper,
+            body,
+        } => format!(
+            "\\sum_{{{}={}}}^{{{}}} {}",
+            ident_to_symbolic(var),
+            expr_to_symbolic(&lower.expr, 0),
+            expr_to_symbolic(&upper.expr, 0),
+            expr_to_symbolic(&body.expr, 2)
+        ),
+        MathExpr::Prod {
+            var,
+            lower,
+            upper,
+            body,
+        } => format!(
+            "\\prod_{{{}={}}}^{{{}}} {}",
+            ident_to_symbolic(var),
+            expr_to_symbolic(&lower.expr, 0),
+            expr_to_symbolic(&upper.expr, 0),
+            expr_to_symbolic(&body.expr, 2)
+        ),
+        MathExpr::ComparisonChain { first, rest } => {
+            let mut out = expr_to_symbolic(&first.expr, 0);
+            for (op, rhs) in rest {
+                out.push(' ');
+                out.push_str(op.as_unicode());
+                out.push(' ');
+                out.push_str(&expr_to_symbolic(&rhs.expr, 0));
+            }
+            out
+        }
+        MathExpr::Piecewise(branches) => {
+            let parts: Vec<String> = branches
+                .iter()
+                .map(|b| {
+                    let val = expr_to_symbolic(&b.value.expr, 0);
+                    if let Some(cond) = &b.condition {
+                        format!("{}: {}", expr_to_symbolic(&cond.expr, 0), val)
+                    } else {
+                        val
+                    }
+                })
+                .collect();
+            format!("{{ {} }}", parts.join(", "))
+        }
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            let conds: Vec<String> = restrictions
+                .iter()
+                .map(|c| expr_to_symbolic(&c.expr, 0))
+                .collect();
+            format!(
+                "{} {{{}}}",
+                expr_to_symbolic(&inner.expr, 0),
+                conds.join(", ")
+            )
+        }
+        MathExpr::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(|e| expr_to_symbolic(&e.expr, 0)).collect();
+            format!("({})", parts.join(", "))
+        }
+        MathExpr::MemberAccess { object, field } => format!("{}${}", object, field),
+        MathExpr::Index { target, index } => {
+            format!(
+                "{}[{}]",
+                expr_to_symbolic(&target.expr, 5),
+                expr_to_symbolic(&index.expr, 0)
+            )
+        }
     }
 }

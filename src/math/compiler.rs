@@ -88,6 +88,37 @@ enum Op {
         /// `(Option<cond_sub_idx>, val_sub_idx)`
         branches: Vec<(Option<usize>, usize)>,
     },
+    Restricted {
+        inner_idx: usize,
+        cond_indices: Vec<usize>,
+    },
+    Tangent {
+        fn_name: String,
+        x0_idx: usize,
+        span: Span,
+    },
+    Elasticity {
+        fn_name: String,
+        x_idx: usize,
+        span: Span,
+    },
+    Marginal {
+        fn_name: String,
+        x_idx: usize,
+        span: Span,
+    },
+    Average {
+        fn_name: String,
+        x_idx: usize,
+        span: Span,
+    },
+    AreaBetween {
+        f_name: String,
+        g_name: String,
+        a_idx: Option<usize>,
+        b_idx: Option<usize>,
+        span: Span,
+    },
     MemberAccess {
         object: String,
         field: String,
@@ -232,7 +263,7 @@ impl CompiledExpr {
                 scratch.slot_bound[i] = true;
                 continue;
             }
-            if let Some(&val) = ctx.params.get(name) {
+            if let Some(&val) = lookup_param_with_alias(ctx.params, name) {
                 scratch.slots[i] = val;
                 scratch.slot_bound[i] = true;
                 continue;
@@ -614,6 +645,189 @@ impl CompiledExpr {
                     }
                     scratch.stack.push(out);
                 }
+                Op::Restricted {
+                    inner_idx,
+                    cond_indices,
+                } => {
+                    let mut child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let val = eval_sub_with_owned_overrides(
+                        &self.sub_exprs[*inner_idx],
+                        ctx,
+                        &child_overrides,
+                        &mut sub_scratch,
+                        depth + 1,
+                    )?;
+                    if !val.is_finite() {
+                        scratch.stack.push(f64::NAN);
+                        continue;
+                    }
+                    // Bind evaluated `y` value so inline range restrictions like `{x >= 0, y >= 0}` work!
+                    if let Some(entry) = child_overrides.iter_mut().find(|(k, _)| k == "y") {
+                        entry.1 = val;
+                    } else {
+                        child_overrides.push(("y".to_string(), val));
+                    }
+                    let mut all_ok = true;
+                    for &c_idx in cond_indices {
+                        let c = eval_sub_with_owned_overrides(
+                            &self.sub_exprs[c_idx],
+                            ctx,
+                            &child_overrides,
+                            &mut sub_scratch,
+                            depth + 1,
+                        )
+                        .unwrap_or(0.0_f64);
+                        if !c.is_finite() || c == 0.0_f64 {
+                            all_ok = false;
+                            break;
+                        }
+                    }
+                    scratch.stack.push(if all_ok { val } else { f64::NAN });
+                }
+                Op::Tangent {
+                    fn_name,
+                    x0_idx,
+                    span,
+                } => {
+                    let child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let x0 = eval_sub_with_owned_overrides(
+                        &self.sub_exprs[*x0_idx],
+                        ctx,
+                        &child_overrides,
+                        &mut sub_scratch,
+                        depth + 1,
+                    )?;
+                    let x_cur = resolve_var_value(
+                        "x",
+                        ctx,
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    )
+                    .unwrap_or(x0);
+                    let (y0, slope) =
+                        eval_fn_val_and_deriv(fn_name, x0, *span, ctx, depth + 1)?;
+                    scratch.stack.push(y0 + slope * (x_cur - x0));
+                }
+                Op::Elasticity {
+                    fn_name,
+                    x_idx,
+                    span,
+                } => {
+                    let child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let xv = eval_sub_with_owned_overrides(
+                        &self.sub_exprs[*x_idx],
+                        ctx,
+                        &child_overrides,
+                        &mut sub_scratch,
+                        depth + 1,
+                    )?;
+                    let (y0, dy) = eval_fn_val_and_deriv(fn_name, xv, *span, ctx, depth + 1)?;
+                    let elas = if y0.abs() < 1e-15_f64 {
+                        f64::NAN
+                    } else {
+                        (dy * xv) / y0
+                    };
+                    scratch.stack.push(elas);
+                }
+                Op::Marginal {
+                    fn_name,
+                    x_idx,
+                    span,
+                } => {
+                    let child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let xv = eval_sub_with_owned_overrides(
+                        &self.sub_exprs[*x_idx],
+                        ctx,
+                        &child_overrides,
+                        &mut sub_scratch,
+                        depth + 1,
+                    )?;
+                    let (_, dy) = eval_fn_val_and_deriv(fn_name, xv, *span, ctx, depth + 1)?;
+                    scratch.stack.push(dy);
+                }
+                Op::Average {
+                    fn_name,
+                    x_idx,
+                    span,
+                } => {
+                    let child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let xv = eval_sub_with_owned_overrides(
+                        &self.sub_exprs[*x_idx],
+                        ctx,
+                        &child_overrides,
+                        &mut sub_scratch,
+                        depth + 1,
+                    )?;
+                    let (y0, _) = eval_fn_val_and_deriv(fn_name, xv, *span, ctx, depth + 1)?;
+                    let avg = if xv.abs() < 1e-15_f64 {
+                        f64::NAN
+                    } else {
+                        y0 / xv
+                    };
+                    scratch.stack.push(avg);
+                }
+                Op::AreaBetween {
+                    f_name,
+                    g_name,
+                    a_idx,
+                    b_idx,
+                    span,
+                } => {
+                    let child_overrides = build_inherited_overrides(
+                        &self.var_names,
+                        scratch,
+                        active_overrides,
+                    );
+                    let mut sub_scratch = EvalScratch::new();
+                    let (a, b) = if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
+                        let av = eval_sub_with_owned_overrides(
+                            &self.sub_exprs[*ai],
+                            ctx,
+                            &child_overrides,
+                            &mut sub_scratch,
+                            depth + 1,
+                        )?;
+                        let bv = eval_sub_with_owned_overrides(
+                            &self.sub_exprs[*bi],
+                            ctx,
+                            &child_overrides,
+                            &mut sub_scratch,
+                            depth + 1,
+                        )?;
+                        (av, bv)
+                    } else {
+                        let eq_x = find_surplus_equilibrium_x(f_name, g_name, ctx, *span, depth + 1)?;
+                        (0.0_f64, eq_x)
+                    };
+                    let val = eval_area_between_fns(f_name, g_name, a, b, *span, ctx, depth + 1)?;
+                    scratch.stack.push(val);
+                }
                 Op::MemberAccess {
                     object,
                     field,
@@ -698,6 +912,19 @@ fn builtin_constant(name: &str) -> Option<f64> {
     }
 }
 
+fn lookup_param_with_alias<'a>(params: &'a IndexMap<String, f64>, name: &str) -> Option<&'a f64> {
+    if let Some(v) = params.get(name) {
+        return Some(v);
+    }
+    match name {
+        "P_x" => params.get("price_x"),
+        "price_x" => params.get("P_x"),
+        "P_y" => params.get("price_y"),
+        "price_y" => params.get("P_y"),
+        _ => None,
+    }
+}
+
 fn resolve_var_value(
     name: &str,
     ctx: &EvalContext<'_>,
@@ -713,7 +940,7 @@ fn resolve_var_value(
             return Some(scratch.slots[slot]);
         }
     }
-    if let Some(&v) = ctx.params.get(name) {
+    if let Some(&v) = lookup_param_with_alias(ctx.params, name) {
         return Some(v);
     }
     if let Some(ext) = ctx.external {
@@ -1027,6 +1254,164 @@ fn eval_function_call(
     ))
 }
 
+pub fn eval_fn_val_and_deriv(
+    fn_name: &str,
+    x0: f64,
+    span: Span,
+    ctx: &EvalContext<'_>,
+    depth: usize,
+) -> Result<(f64, f64), MathError> {
+    let h = ctx.diff_h.clamp(1e-8_f64, 1e-3_f64);
+    let step = h.max(x0.abs() * h * 0.1_f64);
+    if let Some(user_fn) = ctx.functions.get(fn_name) {
+        if user_fn.params.is_empty() {
+            return Err(MathError::new(
+                format!("Function `{}` takes no parameters", fn_name),
+                span,
+            ));
+        }
+        let param = user_fn.params[0].clone();
+        let mut s = EvalScratch::new();
+        let y0 = user_fn.body.eval(ctx, &[(param.as_str(), x0)], &mut s)?;
+        let mut ov = vec![(param.clone(), x0)];
+        let dy = eval_numerical_derivative_compiled(
+            &user_fn.body,
+            &param,
+            x0,
+            1,
+            ctx,
+            &mut ov,
+            depth,
+        )?;
+        return Ok((y0, dy));
+    }
+    if let (Some(y0), Some(fp), Some(fm)) = (
+        eval_builtin(fn_name, &[x0]),
+        eval_builtin(fn_name, &[x0 + step]),
+        eval_builtin(fn_name, &[x0 - step]),
+    ) {
+        return Ok((y0, (fp - fm) / (2.0_f64 * step)));
+    }
+    Err(MathError::new(
+        format!("Unknown function `{}` in calculus/economics operator", fn_name),
+        span,
+    ))
+}
+
+fn eval_single_fn_at(
+    fn_name: &str,
+    x: f64,
+    span: Span,
+    ctx: &EvalContext<'_>,
+    scratch: &mut EvalScratch,
+) -> Result<f64, MathError> {
+    if let Some(user_fn) = ctx.functions.get(fn_name) {
+        if let Some(param) = user_fn.params.first() {
+            return user_fn.body.eval(ctx, &[(param.as_str(), x)], scratch);
+        }
+    }
+    if let Some(v) = eval_builtin(fn_name, &[x]) {
+        return Ok(v);
+    }
+    Err(MathError::new(format!("Unknown function `{}`", fn_name), span))
+}
+
+/// Finds the first positive intersection `f(x*) = g(x*)` for `surplus(f, g)`.
+pub fn find_surplus_equilibrium_x(
+    f_name: &str,
+    g_name: &str,
+    ctx: &EvalContext<'_>,
+    span: Span,
+    _depth: usize,
+) -> Result<f64, MathError> {
+    let mut s1 = EvalScratch::new();
+    let mut s2 = EvalScratch::new();
+    // Verify both functions exist
+    let _ = eval_single_fn_at(f_name, 1.0_f64, span, ctx, &mut s1)?;
+    let _ = eval_single_fn_at(g_name, 1.0_f64, span, ctx, &mut s2)?;
+
+    let roots = super::solver::find_real_roots_1d(
+        |x| {
+            let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1).ok()?;
+            let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2).ok()?;
+            Some(yf - yg)
+        },
+        1e-4_f64,
+        200.0_f64,
+        400,
+    );
+    roots
+        .into_iter()
+        .find(|&r| r > 1e-4_f64)
+        .ok_or_else(|| {
+            MathError::new(
+                format!(
+                    "No positive equilibrium intersection found between `{}` and `{}`",
+                    f_name, g_name
+                ),
+                span,
+            )
+        })
+}
+
+/// Computes `∫_a^b (f(x) - g(x)) dx` via composite Simpson's rule.
+pub fn eval_area_between_fns(
+    f_name: &str,
+    g_name: &str,
+    a: f64,
+    b: f64,
+    span: Span,
+    ctx: &EvalContext<'_>,
+    _depth: usize,
+) -> Result<f64, MathError> {
+    if !a.is_finite() || !b.is_finite() {
+        return Ok(f64::NAN);
+    }
+    if (b - a).abs() < 1e-12_f64 {
+        return Ok(0.0_f64);
+    }
+    let steps = if ctx.integral_steps.is_multiple_of(2) {
+        ctx.integral_steps.max(4)
+    } else {
+        ctx.integral_steps + 1
+    };
+    let h = (b - a) / (steps as f64);
+    let mut s1 = EvalScratch::new();
+    let mut s2 = EvalScratch::new();
+    let mut eval_diff = |x: f64| -> Result<f64, MathError> {
+        let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1)?;
+        let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2)?;
+        Ok(yf - yg)
+    };
+    let mut sum = eval_diff(a)? + eval_diff(b)?;
+    for i in 1..steps {
+        let x = a + (i as f64) * h;
+        let d = eval_diff(x)?;
+        if !d.is_finite() {
+            return Ok(f64::NAN);
+        }
+        sum += if i % 2 == 1 { 4.0_f64 * d } else { 2.0_f64 * d };
+    }
+    Ok(sum * h / 3.0_f64)
+}
+
+/// Extracts a function identifier name from either `f` or `f(x)` when passed into
+/// meta-operators like `tangent(f, x0)`, `elasticity(f, x)`, `area(f, g, a, b)`, `surplus(f, g)`.
+pub fn extract_fn_arg_name(expr: &SpannedExpr) -> Option<String> {
+    if let Some(id) = expr.as_canonical_ident() {
+        return Some(id);
+    }
+    if let MathExpr::Call {
+        name,
+        prime_order: 0,
+        ..
+    } = &expr.expr
+    {
+        return Some(name.clone());
+    }
+    None
+}
+
 fn eval_builtin(name: &str, args: &[f64]) -> Option<f64> {
     match (name, args) {
         ("abs", &[x]) => Some(x.abs()),
@@ -1207,6 +1592,73 @@ impl CompilerBuilder {
                             return;
                         }
                     }
+                    // Native computational economics & calculus meta-operators:
+                    // `tangent(f, x0)`, `elasticity(f, x)` / `epsilon(f, x)`,
+                    // `marginal(f, x)`, `average(f, x)`, `area(f, g, a, b)`, `surplus(f, g)`
+                    if name == "tangent" && args.len() == 2 {
+                        if let Some(fn_name) = extract_fn_arg_name(&args[0]) {
+                            self.intern_var("x");
+                            let x0_idx = self.add_sub(&args[1]);
+                            self.ops.push(Op::Tangent {
+                                fn_name,
+                                x0_idx,
+                                span: node.span,
+                            });
+                            return;
+                        }
+                    }
+                    if matches!(name.as_str(), "elasticity" | "epsilon") && args.len() == 2 {
+                        if let Some(fn_name) = extract_fn_arg_name(&args[0]) {
+                            let x_idx = self.add_sub(&args[1]);
+                            self.ops.push(Op::Elasticity {
+                                fn_name,
+                                x_idx,
+                                span: node.span,
+                            });
+                            return;
+                        }
+                    }
+                    if name == "marginal" && args.len() == 2 {
+                        if let Some(fn_name) = extract_fn_arg_name(&args[0]) {
+                            let x_idx = self.add_sub(&args[1]);
+                            self.ops.push(Op::Marginal {
+                                fn_name,
+                                x_idx,
+                                span: node.span,
+                            });
+                            return;
+                        }
+                    }
+                    if name == "average" && args.len() == 2 {
+                        if let Some(fn_name) = extract_fn_arg_name(&args[0]) {
+                            let x_idx = self.add_sub(&args[1]);
+                            self.ops.push(Op::Average {
+                                fn_name,
+                                x_idx,
+                                span: node.span,
+                            });
+                            return;
+                        }
+                    }
+                    if matches!(name.as_str(), "area" | "surplus") && (args.len() == 2 || args.len() == 4) {
+                        if let (Some(f_name), Some(g_name)) =
+                            (extract_fn_arg_name(&args[0]), extract_fn_arg_name(&args[1]))
+                        {
+                            let (a_idx, b_idx) = if args.len() == 4 {
+                                (Some(self.add_sub(&args[2])), Some(self.add_sub(&args[3])))
+                            } else {
+                                (None, None)
+                            };
+                            self.ops.push(Op::AreaBetween {
+                                f_name,
+                                g_name,
+                                a_idx,
+                                b_idx,
+                                span: node.span,
+                            });
+                            return;
+                        }
+                    }
                 }
 
                 for a in args {
@@ -1297,6 +1749,21 @@ impl CompilerBuilder {
                 self.ops.push(Op::Piecewise {
                     branches: compiled_branches,
                 });
+            }
+            MathExpr::Restricted {
+                inner,
+                restrictions,
+            } => {
+                let inner_idx = self.add_sub(inner);
+                let cond_indices: Vec<usize> =
+                    restrictions.iter().map(|c| self.add_sub(c)).collect();
+                self.ops.push(Op::Restricted {
+                    inner_idx,
+                    cond_indices,
+                });
+            }
+            MathExpr::Placeholder => {
+                self.ops.push(Op::PushConst(f64::NAN));
             }
             MathExpr::Tuple(items) => {
                 if let Some(first) = items.first() {

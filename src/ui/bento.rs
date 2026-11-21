@@ -463,8 +463,57 @@ pub fn capsule_frame(pal: ThemePalette, border_color: Color32) -> egui::Frame {
         .inner_margin(Margin::symmetric(8.0_f32, 6.0_f32))
 }
 
-/// Draws a neon-glowing 2D plot curve: soft translucent aura (`3x` stroke width, `0.18` alpha)
-/// underneath the crisp primary curve stroke.
+/// Curated vibrant curve swatch palette tailored for Dark Slate & Light Bento canvases.
+pub const CURVE_COLOR_SWATCHES: &[Color32] = &[
+    Color32::from_rgb(248, 113, 113), // Coral Red (#F87171)
+    Color32::from_rgb(56, 189, 248),  // Sky Blue (#38BDF8)
+    Color32::from_rgb(52, 211, 153),  // Emerald (#34D399)
+    Color32::from_rgb(167, 139, 250), // Violet (#A78BFA)
+    Color32::from_rgb(251, 191, 36),  // Amber (#FBBF24)
+    Color32::from_rgb(236, 72, 153),  // Rose Pink (#EC4899)
+    Color32::from_rgb(45, 212, 191),  // Teal (#2DD4BF)
+    Color32::from_rgb(251, 146, 60),  // Tangerine (#FB923C)
+    Color32::from_rgb(96, 165, 250),  // Royal Blue (#60A5FA)
+    Color32::from_rgb(163, 230, 53),  // Lime (#A3E635)
+    Color32::from_rgb(226, 232, 240), // Ice Slate (#E2E8F0)
+    Color32::from_rgb(148, 163, 184), // Cool Gray (#94A3B8)
+];
+
+/// Draws a neon-glowing 2D plot curve: soft translucent aura (`3x` stroke width)
+/// underneath the crisp primary curve stroke, modulated by `opacity` (`0.1..=1.0`).
+#[allow(clippy::too_many_arguments)]
+pub fn draw_glowing_plot_line_with_opacity(
+    plot_ui: &mut PlotUi,
+    points: Vec<[f64; 2]>,
+    series_label: &str,
+    color: Color32,
+    stroke_width: f32,
+    line_style: LineStyle,
+    opacity: f32,
+) {
+    if points.is_empty() {
+        return;
+    }
+    let alpha = opacity.clamp(0.1_f32, 1.0_f32);
+    // Outer soft glow pass (unnamed so legend shows only a single entry per curve)
+    plot_ui.line(
+        Line::new(PlotPoints::from(points.clone()))
+            .width(stroke_width * 3.0_f32)
+            .style(line_style)
+            .color(color.gamma_multiply(0.20_f32 * alpha)),
+    );
+    // Crisp core stroke
+    plot_ui.line(
+        Line::new(PlotPoints::from(points))
+            .name(series_label)
+            .width(stroke_width)
+            .style(line_style)
+            .color(color.gamma_multiply(alpha)),
+    );
+}
+
+/// Draws a neon-glowing 2D plot curve at full opacity (`1.0`).
+#[allow(dead_code)]
 pub fn draw_glowing_plot_line(
     plot_ui: &mut PlotUi,
     points: Vec<[f64; 2]>,
@@ -473,29 +522,53 @@ pub fn draw_glowing_plot_line(
     stroke_width: f32,
     line_style: LineStyle,
 ) {
-    if points.is_empty() {
-        return;
-    }
-    // Outer soft glow pass (unnamed so legend shows only a single entry per curve)
-    plot_ui.line(
-        Line::new(PlotPoints::from(points.clone()))
-            .width(stroke_width * 3.0_f32)
-            .style(line_style)
-            .color(color.gamma_multiply(0.18_f32)),
-    );
-    // Crisp core stroke
-    plot_ui.line(
-        Line::new(PlotPoints::from(points))
-            .name(series_label)
-            .width(stroke_width)
-            .style(line_style)
-            .color(color),
+    draw_glowing_plot_line_with_opacity(
+        plot_ui,
+        points,
+        series_label,
+        color,
+        stroke_width,
+        line_style,
+        1.0_f32,
     );
 }
 
+/// Highlights the principal Cartesian axes `x = 0` and `y = 0`, optionally illuminating
+/// X and/or Y with a cyan/blue glow during `Shift` axis-zoom hover & drag.
+pub fn draw_principal_axes_highlighted(
+    plot_ui: &mut PlotUi,
+    pal: ThemePalette,
+    highlight_x: bool,
+    highlight_y: bool,
+) {
+    let base_color = pal.text_muted.gamma_multiply(0.55_f32);
+    let glow_color = Color32::from_rgb(56, 189, 248);
+
+    if highlight_y {
+        plot_ui.vline(
+            VLine::new(0.0_f64)
+                .width(6.5_f32)
+                .color(glow_color.gamma_multiply(0.24_f32)),
+        );
+        plot_ui.vline(VLine::new(0.0_f64).width(2.2_f32).color(glow_color));
+    } else {
+        plot_ui.vline(VLine::new(0.0_f64).width(1.25_f32).color(base_color));
+    }
+
+    if highlight_x {
+        plot_ui.hline(
+            HLine::new(0.0_f64)
+                .width(6.5_f32)
+                .color(glow_color.gamma_multiply(0.24_f32)),
+        );
+        plot_ui.hline(HLine::new(0.0_f64).width(2.2_f32).color(glow_color));
+    } else {
+        plot_ui.hline(HLine::new(0.0_f64).width(1.25_f32).color(base_color));
+    }
+}
+
 /// Highlights the principal Cartesian axes `x = 0` and `y = 0` for crisp quadrant readability.
+#[allow(dead_code)]
 pub fn draw_principal_axes(plot_ui: &mut PlotUi, pal: ThemePalette) {
-    let axis_color = pal.text_muted.gamma_multiply(0.55_f32);
-    plot_ui.vline(VLine::new(0.0_f64).width(1.25_f32).color(axis_color));
-    plot_ui.hline(HLine::new(0.0_f64).width(1.25_f32).color(axis_color));
+    draw_principal_axes_highlighted(plot_ui, pal, false, false);
 }

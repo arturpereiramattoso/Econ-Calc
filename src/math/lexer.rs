@@ -175,7 +175,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
                     tokens.push(Token::new(TokenKind::Command("frac".to_string()), start, i));
                 }
                 "sqrt" | "sum" | "prod" | "int" | "bar" | "overline" | "hat" | "tilde"
-                | "vec" | "text" | "operatorname" => {
+                | "vec" | "text" | "operatorname" | "square" => {
                     let norm = if cmd == "overline" { "bar" } else { cmd };
                     tokens.push(Token::new(TokenKind::Command(norm.to_string()), start, i));
                 }
@@ -296,6 +296,20 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
             'Ȳ' => {
                 tokens.push(Token::new(
                     TokenKind::Ident("Y_bar".to_string()),
+                    i,
+                    i + ch_len,
+                ));
+                i += ch_len;
+                continue;
+            }
+            '′' => {
+                tokens.push(Token::new(TokenKind::Prime, i, i + ch_len));
+                i += ch_len;
+                continue;
+            }
+            '□' => {
+                tokens.push(Token::new(
+                    TokenKind::Command("square".to_string()),
                     i,
                     i + ch_len,
                 ));
@@ -470,4 +484,31 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
 
     tokens.push(Token::new(TokenKind::Eof, len, len));
     Ok(tokens)
+}
+
+/// Lenient tokenizer for live structural typing previews: tolerates a trailing `\` or `!`
+/// while the user is mid-keystroke.
+pub fn tokenize_lenient(input: &str) -> Result<Vec<Token>, MathError> {
+    match tokenize(input) {
+        Ok(toks) => Ok(toks),
+        Err(err) => {
+            // If failure is strictly a trailing `\` or `!` at end-of-input, replace with placeholder
+            let trimmed = input.trim_end();
+            if let Some(prefix) = trimmed.strip_suffix('\\') {
+                let mut toks = tokenize(prefix)?;
+                let eof_span = toks.last().map(|t| t.span).unwrap_or(Span::new(prefix.len(), input.len()));
+                if matches!(toks.last().map(|t| &t.kind), Some(TokenKind::Eof)) {
+                    toks.pop();
+                }
+                toks.push(Token::new(
+                    TokenKind::Command("square".to_string()),
+                    prefix.len(),
+                    input.len(),
+                ));
+                toks.push(Token::new(TokenKind::Eof, eof_span.end, input.len()));
+                return Ok(toks);
+            }
+            Err(err)
+        }
+    }
 }

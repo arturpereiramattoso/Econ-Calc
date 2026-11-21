@@ -2,7 +2,9 @@ use crate::math::ast::{
     AccentKind, BinOp, MathError, MathExpr, MathStatement, SpannedExpr, UnaryOp,
     greek_name_to_unicode,
 };
-use crate::math::parser::{parse_expr_with_known_fns, parse_statement_with_known_fns};
+use crate::math::parser::{
+    parse_expr_with_known_fns, parse_statement_for_preview, parse_statement_with_known_fns,
+};
 use eframe::egui::{self, Color32, FontFamily, FontId, Painter, Pos2, Rounding, Sense, Stroke, Ui, Vec2};
 use std::collections::HashSet;
 
@@ -413,6 +415,19 @@ impl MathBox {
             kind: MathBoxKind::ErrorSpan { text, size },
         }
     }
+
+    /// Active visual slot (`□`) rendered while typing incomplete structural math
+    /// (empty denominator after `/`, empty exponent after `^`, empty subscript after `_`,
+    /// empty radicand in `sqrt()`, or missing bounds/body in `\int`, `\sum`, `\prod`).
+    pub fn placeholder_slot(size: f32) -> Self {
+        let s = size.max(8.0_f32);
+        Self {
+            width: (s * 0.72_f32).max(8.5_f32),
+            ascent: (s * 0.74_f32).max(7.5_f32),
+            descent: (s * 0.16_f32).max(1.5_f32),
+            kind: MathBoxKind::PlaceholderSlot { size: s },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -475,6 +490,10 @@ pub enum MathBoxKind {
         col_gap: f32,
         brace_w: f32,
     },
+    PlaceholderSlot {
+        #[allow(dead_code)]
+        size: f32,
+    },
     ErrorSpan {
         text: String,
         size: f32,
@@ -491,11 +510,12 @@ pub struct PreviewBuild {
     pub layout: MathBox,
     pub parsed_statement: Option<MathStatement>,
     pub error: Option<MathError>,
+    pub has_placeholders: bool,
     pub latex: String,
 }
 
 /// Builds a `MathBox` preview from a raw formula string (optionally preceded by a signature like `f(x)`).
-/// Gracefully handles incomplete expressions while typing.
+/// Gracefully handles incomplete structural expressions while typing with active `□` slots.
 pub fn build_preview_layout(
     m: &dyn TextMeasurer,
     sig_prefix: Option<&str>,
@@ -523,59 +543,72 @@ pub fn build_preview_layout(
             layout: MathBox::row(parts),
             parsed_statement: None,
             error: None,
+            has_placeholders: false,
             latex: String::new(),
         };
     }
 
-    match parse_statement_with_known_fns(trimmed, Some(known_fns)) {
-        Ok(stmt) => {
-            let show_sig = sig_prefix.is_some()
-                && !matches!(
-                    stmt,
-                    MathStatement::Equation { .. }
-                        | MathStatement::Inequality { .. }
-                        | MathStatement::Polar { .. }
-                        | MathStatement::Parametric { .. }
-                        | MathStatement::FunctionDef { .. }
-                );
-            let mut parts = Vec::new();
-            if show_sig {
-                if let Some(sig) = sig_prefix {
-                    if !sig.trim().is_empty() {
-                        parts.push(layout_signature_prefix(m, sig, base_size, sig_color));
-                    }
+    let layout_from_stmt = |stmt: MathStatement, has_placeholders: bool| -> PreviewBuild {
+        let show_sig = sig_prefix.is_some()
+            && !matches!(
+                stmt,
+                MathStatement::Equation { .. }
+                    | MathStatement::Inequality { .. }
+                    | MathStatement::Polar { .. }
+                    | MathStatement::Parametric { .. }
+                    | MathStatement::FunctionDef { .. }
+                    | MathStatement::ParamAssign { .. }
+            );
+        let mut parts = Vec::new();
+        if show_sig {
+            if let Some(sig) = sig_prefix {
+                if !sig.trim().is_empty() {
+                    parts.push(layout_signature_prefix(m, sig, base_size, sig_color));
                 }
             }
-            let stmt_box = layout_statement(m, &stmt, base_size);
-            parts.push(stmt_box);
+        }
+        let stmt_box = layout_statement(m, &stmt, base_size);
+        parts.push(stmt_box);
 
-            let latex = if show_sig {
-                if let Some(sig) = sig_prefix {
-                    if !sig.trim().is_empty() {
-                        format!(
-                            "{} = {}",
-                            crate::math::to_latex_from_ast(sig),
-                            stmt.to_latex()
-                        )
-                    } else {
+        let latex = if show_sig {
+            if let Some(sig) = sig_prefix {
+                if !sig.trim().is_empty() {
+                    format!(
+                        "{} = {}",
+                        crate::math::to_latex_from_ast(sig),
                         stmt.to_latex()
-                    }
+                    )
                 } else {
                     stmt.to_latex()
                 }
             } else {
                 stmt.to_latex()
-            };
-
-            PreviewBuild {
-                layout: MathBox::row(parts),
-                parsed_statement: Some(stmt),
-                error: None,
-                latex,
             }
+        } else {
+            stmt.to_latex()
+        };
+
+        PreviewBuild {
+            layout: MathBox::row(parts),
+            parsed_statement: if has_placeholders { None } else { Some(stmt) },
+            error: None,
+            has_placeholders,
+            latex,
         }
+    };
+
+    match parse_statement_with_known_fns(trimmed, Some(known_fns)) {
+        Ok(stmt) => layout_from_stmt(stmt, false),
         Err(err) => {
-            // Graceful partial preview: try parsing a balanced prefix before the error span
+            // Try structural lenient parse first so typing `/`, `1/`, `(x+1)/`, `x^`, `P_`,
+            // `sqrt()`, `nthroot()`, `\int`, `\sum`, `\prod`, `d/dx` immediately renders 2D
+            // layout with active `□` placeholder slots and NO red syntax error!
+            if let Ok(lenient_stmt) = parse_statement_for_preview(trimmed, Some(known_fns)) {
+                let has_ph = lenient_stmt.has_placeholder();
+                return layout_from_stmt(lenient_stmt, has_ph);
+            }
+
+            // Graceful partial preview for genuine syntax errors: try parsing a balanced prefix
             let mut parts = Vec::new();
             if let Some(sig) = sig_prefix {
                 if !sig.trim().is_empty() && !trimmed.contains('=') {
@@ -627,6 +660,7 @@ pub fn build_preview_layout(
                 layout: MathBox::row(parts),
                 parsed_statement: None,
                 error: Some(err),
+                has_placeholders: false,
                 latex: trimmed.to_string(),
             }
         }
@@ -1041,6 +1075,30 @@ pub fn layout_expr(m: &dyn TextMeasurer, node: &SpannedExpr, size: f32) -> MathB
             }
             MathBox::piecewise(rows, size)
         }
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            let cond_size = (size * 0.86_f32).max(9.5_f32);
+            let mut cond_items = Vec::new();
+            for (i, cond) in restrictions.iter().enumerate() {
+                if i > 0 {
+                    cond_items.push(MathBox::text(m, ", ", cond_size, false));
+                }
+                cond_items.push(layout_expr(m, cond, cond_size));
+            }
+            MathBox::row(vec![
+                layout_expr(m, inner, size),
+                MathBox::space(size * 0.35_f32),
+                MathBox::delimited(
+                    DelimKind::Brace,
+                    DelimKind::Brace,
+                    MathBox::row(cond_items),
+                    cond_size,
+                ),
+            ])
+        }
+        MathExpr::Placeholder => MathBox::placeholder_slot(size),
         MathExpr::Tuple(items) => {
             let mut inner = Vec::new();
             for (i, item) in items.iter().enumerate() {
@@ -1179,6 +1237,36 @@ pub fn paint_math_box(
             let font = FontId::new(size.max(6.0_f32), FontFamily::Proportional);
             let top_y = baseline_y - mbox.ascent;
             painter.text(Pos2::new(origin_x, top_y), egui::Align2::LEFT_TOP, text, font, color);
+        }
+        MathBoxKind::PlaceholderSlot { .. } => {
+            let slot_rect = egui::Rect::from_min_max(
+                Pos2::new(origin_x + 0.8_f32, baseline_y - mbox.ascent + 1.0_f32),
+                Pos2::new(origin_x + mbox.width - 0.8_f32, baseline_y + mbox.descent - 0.5_f32),
+            );
+            let accent = Color32::from_rgb(96, 165, 250);
+            painter.rect_filled(slot_rect, Rounding::same(3.0_f32), accent.gamma_multiply(0.14_f32));
+            // Subtle dashed border segments around the active visual placeholder slot
+            let dash_stroke = Stroke::new(1.15_f32, accent.gamma_multiply(0.75_f32));
+            let dash_len = 3.0_f32;
+            let gap_len = 2.0_f32;
+            let draw_dashed = |p0: Pos2, p1: Pos2| {
+                let d = p1 - p0;
+                let total = d.length();
+                if total < 1.0_f32 {
+                    return;
+                }
+                let dir = d / total;
+                let mut dist = 0.0_f32;
+                while dist < total {
+                    let seg_end = (dist + dash_len).min(total);
+                    painter.line_segment([p0 + dir * dist, p0 + dir * seg_end], dash_stroke);
+                    dist += dash_len + gap_len;
+                }
+            };
+            draw_dashed(slot_rect.left_top(), slot_rect.right_top());
+            draw_dashed(slot_rect.right_top(), slot_rect.right_bottom());
+            draw_dashed(slot_rect.right_bottom(), slot_rect.left_bottom());
+            draw_dashed(slot_rect.left_bottom(), slot_rect.left_top());
         }
         MathBoxKind::ErrorSpan { text, size } => {
             let font = FontId::new(size.max(6.0_f32), FontFamily::Monospace);
@@ -1525,8 +1613,111 @@ fn paint_delimiter(
     }
 }
 
-/// Convenience widget that allocates and paints a crisp native typeset preview strip in `ui`.
+/// Renders a typographic mathematical identifier (`P_x`, `P_y`, `Y_bar`, `\alpha_1`, `c_1`, etc.)
+/// natively via `MathBox` subscripts, overbars, and Greek glyphs — completely avoiding missing
+/// Unicode subscript glyphs (`P□`).
+pub fn render_math_ident_inline(
+    ui: &mut Ui,
+    ident: &str,
+    base_size: f32,
+    color: Color32,
+) -> egui::Response {
+    let measurer = EguiTextMeasurer {
+        painter: ui.painter(),
+    };
+    let mbox = layout_ident(&measurer, ident, base_size, Some(color));
+    let desired = Vec2::new(mbox.width.max(8.0_f32) + 2.0_f32, mbox.height().max(base_size + 2.0_f32));
+    let (rect, resp) = ui.allocate_exact_size(desired, Sense::hover());
+    let top_offset = (rect.height() - mbox.height()) * 0.5_f32;
+    let baseline_y = rect.top() + top_offset + mbox.ascent;
+    paint_math_box(
+        ui.painter(),
+        &mbox,
+        rect.left() + 1.0_f32,
+        baseline_y,
+        color,
+        color,
+    );
+    resp
+}
+
+/// Interactive "Math-as-Written" strip that supports clicking directly on the 2D formula
+/// to focus/edit it, showing an active focus highlight ring and optional blinking caret.
 #[allow(clippy::too_many_arguments)]
+pub fn render_math_preview_strip_interactive(
+    ui: &mut Ui,
+    sig_prefix: Option<&str>,
+    raw_expr: &str,
+    known_fns: &HashSet<String>,
+    base_size: f32,
+    text_color: Color32,
+    sig_color: Option<Color32>,
+    bg_color: Color32,
+    border_color: Color32,
+    error_color: Color32,
+    focused: bool,
+    accent_color: Color32,
+) -> (PreviewBuild, egui::Response) {
+    let measurer = EguiTextMeasurer {
+        painter: ui.painter(),
+    };
+    let build = build_preview_layout(&measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color);
+
+    let pad_x = 8.0_f32;
+    let pad_y = 5.0_f32;
+    let desired_w = ui.available_width().max(build.layout.width + 2.0_f32 * pad_x + 6.0_f32);
+    let desired_h = (build.layout.height() + 2.0_f32 * pad_y).max(base_size + 10.0_f32);
+
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(desired_w, desired_h), Sense::click());
+    let stroke_color = if build.error.is_some() {
+        error_color
+    } else if focused {
+        accent_color
+    } else if resp.hovered() {
+        accent_color.gamma_multiply(0.55_f32)
+    } else {
+        border_color
+    };
+
+    let painter = ui.painter_at(rect.intersect(ui.clip_rect()));
+    painter.rect_filled(rect, Rounding::same(6.0_f32), bg_color);
+    painter.rect_stroke(
+        rect,
+        Rounding::same(6.0_f32),
+        Stroke::new(if focused { 1.4_f32 } else { 1.0_f32 }, stroke_color),
+    );
+
+    let content_h = build.layout.height();
+    let top_offset = (rect.height() - content_h) * 0.5_f32;
+    let baseline_y = rect.top() + top_offset + build.layout.ascent;
+    let origin_x = rect.left() + pad_x;
+
+    paint_math_box(
+        &painter,
+        &build.layout,
+        origin_x,
+        baseline_y,
+        text_color,
+        error_color,
+    );
+
+    // Subtle live caret indicator at the end of the 2D preview while actively focused
+    if focused && !build.has_placeholders {
+        let blink_on = ((ui.input(|i| i.time) * 2.0_f64) as i64) % 2 == 0;
+        if blink_on {
+            let cx = origin_x + build.layout.width + 2.5_f32;
+            let cy0 = (baseline_y - base_size * 0.78_f32).max(rect.top() + 3.0_f32);
+            let cy1 = (baseline_y + base_size * 0.22_f32).min(rect.bottom() - 3.0_f32);
+            painter.line_segment([Pos2::new(cx, cy0), Pos2::new(cx, cy1)], Stroke::new(1.5_f32, accent_color));
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(450));
+    }
+
+    (build, resp)
+}
+
+/// Convenience widget that allocates and paints a crisp native typeset preview strip in `ui`.
+#[allow(clippy::too_many_arguments, dead_code)]
 pub fn render_math_preview_strip(
     ui: &mut Ui,
     sig_prefix: Option<&str>,
@@ -1604,19 +1795,40 @@ pub fn apply_smart_math_shortcuts(input: &mut String) -> bool {
         ("gamma", "γ"),
         ("delta", "δ"),
         ("epsilon", "ε"),
+        ("zeta", "ζ"),
+        ("eta", "η"),
         ("theta", "θ"),
+        ("iota", "ι"),
+        ("kappa", "κ"),
         ("lambda", "λ"),
-        ("sigma", "σ"),
-        ("omega", "ω"),
-        ("rho", "ρ"),
-        ("tau", "τ"),
-        ("phi", "φ"),
-        ("psi", "ψ"),
+        ("mu", "μ"),
+        ("nu", "ν"),
+        ("xi", "ξ"),
         ("pi", "π"),
+        ("rho", "ρ"),
+        ("sigma", "σ"),
+        ("tau", "τ"),
+        ("upsilon", "υ"),
+        ("phi", "φ"),
+        ("chi", "χ"),
+        ("psi", "ψ"),
+        ("omega", "ω"),
     ];
 
     for &(word, sym) in SHORTCUTS {
         s = replace_delimited_greek(&s, word, sym);
+    }
+
+    // Structural operator shortcuts triggered specifically on trailing space (non-destructive)
+    const SPACE_OP_SHORTCUTS: &[(&str, &str)] = &[
+        ("sqrt ", "√"),
+        ("int ", "∫"),
+        ("sum ", "∑"),
+        ("prod ", "∏"),
+        ("infty ", "∞"),
+    ];
+    for &(word, sym) in SPACE_OP_SHORTCUTS {
+        s = replace_space_operator(&s, word, sym);
     }
 
     if s != original {
@@ -1625,6 +1837,34 @@ pub fn apply_smart_math_shortcuts(input: &mut String) -> bool {
     } else {
         false
     }
+}
+
+fn replace_space_operator(src: &str, word_with_space: &str, sym: &str) -> String {
+    if !src.contains(word_with_space) {
+        return src.to_string();
+    }
+    let is_word_ch = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '\\';
+    let mut out = String::with_capacity(src.len());
+    let mut rest = src;
+    let mut prev: Option<char> = None;
+
+    while let Some(pos) = rest.find(word_with_space) {
+        let prefix = &rest[..pos];
+        if let Some(ch) = prefix.chars().last() {
+            prev = Some(ch);
+        }
+        let valid_before = !prev.map(is_word_ch).unwrap_or(false);
+        out.push_str(prefix);
+        if valid_before {
+            out.push_str(sym);
+        } else {
+            out.push_str(word_with_space);
+        }
+        prev = Some(' ');
+        rest = &rest[pos + word_with_space.len()..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn replace_delimited_greek(src: &str, word: &str, sym: &str) -> String {
@@ -1735,5 +1975,35 @@ mod tests {
         // Does not corrupt identifiers containing underscores or backslash commands
         let mut untouched = r"\alpha + alpha_1".to_string();
         assert!(!apply_smart_math_shortcuts(&mut untouched));
+    }
+
+    #[test]
+    fn test_live_fraction_and_structural_placeholder_slots() {
+        let m = MockTextMeasurer;
+        let known = HashSet::new();
+        let plain = build_preview_layout(&m, None, "x + 1", &known, 16.0, None);
+
+        for expr in ["/", "1/", "(x+1)/", "g(x,y) = ln(5x)/"] {
+            let preview = build_preview_layout(&m, None, expr, &known, 16.0, None);
+            assert!(
+                preview.error.is_none(),
+                "Expected no red error while typing structural fraction `{}`: {:?}",
+                expr,
+                preview.error
+            );
+            assert!(preview.has_placeholders);
+            assert!(
+                preview.layout.height() > plain.layout.height() * 1.4,
+                "Expected stacked 2D fraction height for `{}`",
+                expr
+            );
+        }
+
+        for expr in ["x^", "P_", "sqrt()", r"\int_0^1", r"\sum_{i=1}"] {
+            let preview = build_preview_layout(&m, None, expr, &known, 16.0, None);
+            assert!(preview.error.is_none(), "Unexpected error on `{}`", expr);
+            assert!(preview.has_placeholders);
+            assert!(preview.layout.width > 0.0);
+        }
     }
 }

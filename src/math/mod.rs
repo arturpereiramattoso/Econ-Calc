@@ -4,12 +4,16 @@ pub mod graph;
 pub mod lexer;
 pub mod parser;
 pub mod sampling;
+pub mod solver;
 
 use crate::collections::IndexMap;
 pub use ast::{
     BinOp, CmpOp, MathError, MathExpr, MathStatement, Span, SpannedExpr, UnaryOp, ident_to_latex,
 };
-pub use compiler::{CompiledExpr, CompiledUserFn, EvalContext, EvalScratch, MathExternalEnv};
+pub use compiler::{
+    CompiledExpr, CompiledUserFn, EvalContext, EvalScratch, MathExternalEnv,
+    eval_fn_val_and_deriv, extract_fn_arg_name, find_surplus_equilibrium_x,
+};
 pub use graph::{
     CycleError, ParsedFunction, parse_function_signature, topological_sort_functions,
 };
@@ -21,6 +25,9 @@ pub use sampling::{
     sample_1d_branches, sample_explicit_y_inequality, sample_implicit_2d_inequality,
     sample_implicit_contours, sample_parametric_branches, sample_polar_branches,
 };
+pub use solver::{
+    PoiKind, detect_curve_pois, eval_compiled_at_x, float_to_fraction, solve_compiled_roots_1d,
+};
 use std::collections::{HashMap, HashSet};
 
 /// Classified plot kind for a Desmos workspace entry.
@@ -28,6 +35,13 @@ use std::collections::{HashMap, HashSet};
 pub enum PlottableEntry {
     Explicit1D {
         compiled: CompiledExpr,
+    },
+    /// 1-variable equation in `x` (e.g. `x^2 - 5x + 6 = 0`, `f(x) = g(x)`, `f'(x) = 0`)
+    /// solved automatically for real roots `x*` in the active domain!
+    Equation1D {
+        diff_compiled: CompiledExpr,
+        lhs_compiled: CompiledExpr,
+        is_fn_intersection: bool,
     },
     ImplicitEquation {
         /// Compiled `lhs - rhs`
@@ -50,8 +64,26 @@ pub enum PlottableEntry {
         param: String,
         r_compiled: CompiledExpr,
     },
+    /// Native `tangent(f, x0)` operator: plots tangent line + tangency point & shows `y = mx + b`
+    TangentLine {
+        fn_name: String,
+        x0_compiled: CompiledExpr,
+        line_compiled: CompiledExpr,
+    },
+    /// Native `area(f, g, a, b)` / `surplus(f, g)` operator: shades region between `f` and `g` & shows integral value
+    AreaBetween {
+        f_name: String,
+        g_name: String,
+        a_compiled: Option<CompiledExpr>,
+        b_compiled: Option<CompiledExpr>,
+        area_compiled: CompiledExpr,
+    },
+    /// Constant scalar expression or point function evaluation (`f(5)`, `f(g(5))`, `f'(5)`, `2^10 + 45/9`, `\int_0^1 x^2 dx`)
     ScalarOnly {
         compiled: CompiledExpr,
+        /// When expression is a 1-arg call like `f(5)` or `f'(5)`, stores compiled argument `x0`
+        /// so the UI can offer a one-click `📍 Plot Point` toggle for `(x0, val)`.
+        eval_point_x: Option<CompiledExpr>,
     },
 }
 
@@ -154,11 +186,29 @@ impl CompiledWorkspace {
                 let diff = SpannedExpr::new(
                     MathExpr::Binary {
                         op: BinOp::Sub,
-                        lhs: Box::new(lhs),
-                        rhs: Box::new(rhs),
+                        lhs: Box::new(lhs.clone()),
+                        rhs: Box::new(rhs.clone()),
                     },
                     span,
                 );
+                // Check if 1-variable equation in `x` (no `y` present, `x` IS present):
+                // e.g. `x^2 - 5x + 6 = 0`, `2x + 4 = 10`, `f(x) = g(x)`, `f'(x) = 0`
+                let mentions_y = expr_mentions_any(&lhs, &["y"]) || expr_mentions_any(&rhs, &["y"]);
+                let mentions_x = expr_mentions_any(&lhs, &["x", "L", "Q", "Y"])
+                    || expr_mentions_any(&rhs, &["x", "L", "Q", "Y"]);
+                if !mentions_y && mentions_x {
+                    let rhs_is_zero = matches!(rhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
+                    let lhs_is_zero = matches!(lhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
+                    let is_fn_intersection = !rhs_is_zero
+                        && !lhs_is_zero
+                        && (matches!(lhs.expr, MathExpr::Call { .. })
+                            || matches!(rhs.expr, MathExpr::Call { .. }));
+                    return Ok(PlottableEntry::Equation1D {
+                        diff_compiled: CompiledExpr::compile(&diff),
+                        lhs_compiled: CompiledExpr::compile(&lhs),
+                        is_fn_intersection,
+                    });
+                }
                 Ok(PlottableEntry::ImplicitEquation {
                     diff_compiled: CompiledExpr::compile(&diff),
                 })
@@ -201,12 +251,22 @@ impl CompiledWorkspace {
                     diff_compiled: CompiledExpr::compile(&diff),
                 })
             }
-            MathStatement::FunctionDef { body, .. } | MathStatement::ParamAssign { value: body, .. } => {
+            MathStatement::FunctionDef { body, .. } => {
+                if let Some(special) = classify_econ_special_expr(&body) {
+                    return Ok(special);
+                }
                 Ok(PlottableEntry::Explicit1D {
                     compiled: CompiledExpr::compile(&body),
                 })
             }
+            MathStatement::ParamAssign { value, .. } => Ok(PlottableEntry::ScalarOnly {
+                compiled: CompiledExpr::compile(&value),
+                eval_point_x: None,
+            }),
             MathStatement::Expr(expr) => {
+                if let Some(special) = classify_econ_special_expr(&expr) {
+                    return Ok(special);
+                }
                 if let MathExpr::Tuple(mut items) = expr.expr.clone() {
                     if items.len() == 2 {
                         let y_expr = items.remove(1);
@@ -239,13 +299,67 @@ impl CompiledWorkspace {
                         compiled: CompiledExpr::compile(&expr),
                     })
                 } else {
+                    // Check if constant single-arg function call `f(5)` or `f'(5)` for `📍 Plot Point`
+                    let eval_point_x = match &expr.expr {
+                        MathExpr::Call { name, args, .. }
+                            if args.len() == 1
+                                && (self.known_fn_names.contains(name)
+                                    || parser::is_builtin_function(name)) =>
+                        {
+                            Some(CompiledExpr::compile(&args[0]))
+                        }
+                        _ => None,
+                    };
                     Ok(PlottableEntry::ScalarOnly {
                         compiled: CompiledExpr::compile(&expr),
+                        eval_point_x,
                     })
                 }
             }
         }
     }
+}
+
+/// Detects native computational economics / calculus plotting expressions (`tangent`, `area`, `surplus`).
+fn classify_econ_special_expr(expr: &SpannedExpr) -> Option<PlottableEntry> {
+    if let MathExpr::Call {
+        name,
+        prime_order: 0,
+        args,
+    } = &expr.expr
+    {
+        if name == "tangent" && args.len() == 2 {
+            if let Some(fn_name) = extract_fn_arg_name(&args[0]) {
+                return Some(PlottableEntry::TangentLine {
+                    fn_name,
+                    x0_compiled: CompiledExpr::compile(&args[1]),
+                    line_compiled: CompiledExpr::compile(expr),
+                });
+            }
+        }
+        if matches!(name.as_str(), "area" | "surplus") && (args.len() == 2 || args.len() == 4) {
+            if let (Some(f_name), Some(g_name)) =
+                (extract_fn_arg_name(&args[0]), extract_fn_arg_name(&args[1]))
+            {
+                let (a_compiled, b_compiled) = if args.len() == 4 {
+                    (
+                        Some(CompiledExpr::compile(&args[2])),
+                        Some(CompiledExpr::compile(&args[3])),
+                    )
+                } else {
+                    (None, None)
+                };
+                return Some(PlottableEntry::AreaBetween {
+                    f_name,
+                    g_name,
+                    a_compiled,
+                    b_compiled,
+                    area_compiled: CompiledExpr::compile(expr),
+                });
+            }
+        }
+    }
+    None
 }
 
 /// Converts a math expression or statement into canonical LaTeX directly from the parsed AST.
@@ -258,6 +372,13 @@ pub fn to_latex_from_ast(raw: &str) -> String {
     }
     // Graceful fallback for incomplete/partial text
     ident_to_latex(raw.trim())
+}
+
+/// Parses LaTeX or math syntax and emits clean canonical EconCalc symbolic notation
+/// (for two-way LaTeX <-> Symbolic synchronization).
+pub fn latex_to_symbolic_from_ast(raw: &str, known_fns: &HashSet<String>) -> Result<String, MathError> {
+    let stmt = parse_statement_with_known_fns(raw.trim(), Some(known_fns))?;
+    Ok(stmt.to_symbolic())
 }
 
 /// Substitutes parameter values into an AST-formatted expression for TikZ/pgfplots export.
@@ -321,6 +442,7 @@ pub fn format_for_tikz(raw: &str, params: &IndexMap<String, f64>) -> String {
                 let a: Vec<String> = args.iter().map(|e| emit_tikz(&e.expr, params)).collect();
                 format!("{}({})", name, a.join(", "))
             }
+            MathExpr::Restricted { inner, .. } => emit_tikz(&inner.expr, params),
             _ => "0".to_string(),
         }
     }
@@ -556,5 +678,184 @@ mod tests {
 
         let latex = to_latex_from_ast(r"\frac{I - price_x * x}{price_y}");
         assert_eq!(latex, r"\frac{I - P_x \cdot x}{P_y}");
+    }
+
+    #[test]
+    fn test_structural_placeholder_parsing_for_live_typing() {
+        let samples = [
+            "/",
+            "1/",
+            "(x+1)/",
+            "g(x,y) = ln(5x)/",
+            "x^",
+            "P_",
+            "sqrt()",
+            "nthroot()",
+            r"\int_0^1",
+            r"\sum_{i=1}",
+            "d/dx",
+            "f(x) = ",
+        ];
+        for s in samples {
+            let st = parser::parse_statement_for_preview(s, None)
+                .unwrap_or_else(|e| panic!("Lenient preview parse failed on `{}`: {}", s, e));
+            assert!(
+                st.has_placeholder(),
+                "Expected placeholder slot in `{}` -> {:?}",
+                s,
+                st
+            );
+        }
+    }
+
+    #[test]
+    fn test_inline_domain_and_range_restrictions() {
+        assert!((eval_simple("x^2 {0 <= x <= 5}", 3.0, 0.0, &[]) - 9.0).abs() < 1e-12);
+        assert!(eval_simple("x^2 {0 <= x <= 5}", -1.0, 0.0, &[]).is_nan());
+        assert!(eval_simple("x^2 {0 <= x <= 5}", 6.0, 0.0, &[]).is_nan());
+
+        // Range restriction `{x >= 0, y >= 0}` restricts output `y` directly
+        assert!((eval_simple("10 - x {x >= 0, y >= 0}", 4.0, 0.0, &[]) - 6.0).abs() < 1e-12);
+        assert!(eval_simple("10 - x {x >= 0, y >= 0}", 12.0, 0.0, &[]).is_nan());
+        assert!(eval_simple("10 - x {x >= 0, y >= 0}", -2.0, 0.0, &[]).is_nan());
+    }
+
+    #[test]
+    fn test_function_argument_eval_compositions_derivatives_and_1d_equations() {
+        let mut fns_raw = IndexMap::new();
+        fns_raw.insert("f(x)".to_string(), "x^2".to_string());
+        fns_raw.insert("g(x)".to_string(), "x^3".to_string());
+        fns_raw.insert("u(x, y)".to_string(), "x^0.5 * y^0.5".to_string());
+        let cw = CompiledWorkspace::build(&fns_raw);
+        let params = IndexMap::new();
+        let ctx = EvalContext::new(&params, &cw.functions);
+        let mut scratch = EvalScratch::new();
+
+        // f(5) = 25, classified as ScalarOnly with plot-point x0 = 5
+        let cls_f5 = cw.classify_entry("", "f(5)").unwrap();
+        let PlottableEntry::ScalarOnly {
+            compiled,
+            eval_point_x,
+        } = cls_f5
+        else {
+            panic!("Expected ScalarOnly for `f(5)`");
+        };
+        assert!((compiled.eval(&ctx, &[], &mut scratch).unwrap() - 25.0).abs() < 1e-9);
+        assert!(eval_point_x.is_some());
+
+        // Compositions & derivatives at a point: f(g(5)) = 15625, f'(5) = 10, f''(5) = 2, u(4, 9) = 6
+        let eval_c = |expr: &str| -> f64 {
+            let ast = parse_expr_with_known_fns(expr, &cw.known_fn_names).unwrap();
+            let comp = CompiledExpr::compile(&ast);
+            let mut s = EvalScratch::new();
+            comp.eval(&ctx, &[], &mut s).unwrap()
+        };
+        assert!((eval_c("f(g(5))") - 15_625.0).abs() < 1e-6);
+        assert!((eval_c("f'(5)") - 10.0).abs() < 1e-4);
+        assert!((eval_c("f''(5)") - 2.0).abs() < 1e-3);
+        assert!((eval_c("u(4, 9)") - 6.0).abs() < 1e-9);
+
+        // 1-variable equation auto-solver: x^2 - 5x + 6 = 0 -> x = 2, 3
+        let eq_cls = cw.classify_entry("", "x^2 - 5x + 6 = 0").unwrap();
+        let PlottableEntry::Equation1D { diff_compiled, .. } = eq_cls else {
+            panic!("Expected Equation1D for `x^2 - 5x + 6 = 0`");
+        };
+        let roots = solve_compiled_roots_1d(&diff_compiled, &ctx, -5.0, 10.0, 300);
+        assert_eq!(roots.len(), 2);
+        assert!((roots[0] - 2.0).abs() < 1e-6);
+        assert!((roots[1] - 3.0).abs() < 1e-6);
+
+        // Even-multiplicity tangent root: (x - 2)^2 = 0 -> x = 2
+        let tang_eq = cw.classify_entry("", "(x - 2)^2 = 0").unwrap();
+        let PlottableEntry::Equation1D { diff_compiled, .. } = tang_eq else {
+            panic!("Expected Equation1D");
+        };
+        let tang_roots = solve_compiled_roots_1d(&diff_compiled, &ctx, -5.0, 10.0, 300);
+        assert_eq!(tang_roots.len(), 1);
+        assert!((tang_roots[0] - 2.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_native_economics_operators_tangent_elasticity_marginal_average_surplus() {
+        let mut fns_raw = IndexMap::new();
+        fns_raw.insert("f(x)".to_string(), "x^2".to_string());
+        fns_raw.insert("q(x)".to_string(), "2 * x^0.45".to_string());
+        fns_raw.insert("tc(x)".to_string(), "x^2 + 3 * x".to_string());
+        fns_raw.insert("d(x)".to_string(), "20 - 2 * x".to_string());
+        fns_raw.insert("s(x)".to_string(), "2 * x".to_string());
+        let cw = CompiledWorkspace::build(&fns_raw);
+        let params = IndexMap::new();
+        let ctx = EvalContext::new(&params, &cw.functions);
+        let mut scratch = EvalScratch::new();
+
+        // tangent(f, 3) for f(x)=x^2 -> y = 6x - 9 => at x=4, y=15
+        let tang = cw.classify_entry("", "tangent(f, 3)").unwrap();
+        let PlottableEntry::TangentLine { line_compiled, .. } = tang else {
+            panic!("Expected TangentLine");
+        };
+        let y_at_4 = line_compiled.eval(&ctx, &[("x", 4.0)], &mut scratch).unwrap();
+        assert!((y_at_4 - 15.0).abs() < 1e-4);
+
+        // elasticity(q, 5) & \varepsilon(q, 5) for 2*x^0.45 -> 0.45
+        let el_ast = parse_expr_with_known_fns("elasticity(q, 5)", &cw.known_fn_names).unwrap();
+        let el_val = CompiledExpr::compile(&el_ast)
+            .eval(&ctx, &[], &mut scratch)
+            .unwrap();
+        assert!((el_val - 0.45).abs() < 1e-4);
+
+        let eps_ast = parse_expr_with_known_fns(r"\varepsilon(q, 5)", &cw.known_fn_names).unwrap();
+        let eps_val = CompiledExpr::compile(&eps_ast)
+            .eval(&ctx, &[], &mut scratch)
+            .unwrap();
+        assert!((eps_val - 0.45).abs() < 1e-4);
+
+        // marginal(tc, 4) = 2(4)+3 = 11; average(tc, 4) = (16+12)/4 = 7
+        let mc_ast = parse_expr_with_known_fns("marginal(tc, 4)", &cw.known_fn_names).unwrap();
+        let mc_val = CompiledExpr::compile(&mc_ast)
+            .eval(&ctx, &[], &mut scratch)
+            .unwrap();
+        assert!((mc_val - 11.0).abs() < 1e-4);
+
+        let ac_ast = parse_expr_with_known_fns("average(tc, 4)", &cw.known_fn_names).unwrap();
+        let ac_val = CompiledExpr::compile(&ac_ast)
+            .eval(&ctx, &[], &mut scratch)
+            .unwrap();
+        assert!((ac_val - 7.0).abs() < 1e-9);
+
+        // surplus(d, s) between d(x)=20-2x and s(x)=2x -> eq x*=5, ∫_0^5 (20 - 4x) dx = 50
+        let surp = cw.classify_entry("", "surplus(d, s)").unwrap();
+        let PlottableEntry::AreaBetween { area_compiled, .. } = surp else {
+            panic!("Expected AreaBetween");
+        };
+        let surp_val = area_compiled.eval(&ctx, &[], &mut scratch).unwrap();
+        assert!((surp_val - 50.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_continued_fractions_poi_detection_and_two_way_latex() {
+        assert_eq!(float_to_fraction(1.0 / 3.0, 10_000, 1e-8), Some((1, 3)));
+        assert_eq!(float_to_fraction(-1.75, 10_000, 1e-8), Some((-7, 4)));
+        assert_eq!(float_to_fraction(std::f64::consts::PI, 1_000, 1e-8), None);
+
+        // POI detection on y = x^2 - 4 against y = 5
+        let params = IndexMap::new();
+        let fns = HashMap::new();
+        let ctx = EvalContext::new(&params, &fns);
+        let parabola = CompiledExpr::compile(&parse_expr("x^2 - 4").unwrap());
+        let line5 = CompiledExpr::compile(&parse_expr("5").unwrap());
+        let pois = detect_curve_pois("f", &parabola, &[("g", &line5)], &ctx, -5.0, 5.0, -6.0, 8.0);
+        assert!(pois.iter().any(|p| p.kind == PoiKind::Root && (p.x - 2.0).abs() < 1e-4));
+        assert!(pois.iter().any(|p| p.kind == PoiKind::Root && (p.x + 2.0).abs() < 1e-4));
+        assert!(pois.iter().any(|p| p.kind == PoiKind::LocalMin && p.x.abs() < 1e-3 && (p.y + 4.0).abs() < 1e-3));
+        assert!(pois.iter().any(|p| p.kind == PoiKind::Intersection && (p.x - 3.0).abs() < 1e-3));
+
+        // Two-way LaTeX -> Symbolic round-trip
+        let sym = latex_to_symbolic_from_ast(
+            r"\frac{-b + \sqrt{b^2 - 4ac}}{2a}",
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert!(sym.contains("sqrt("));
+        assert!(sym.contains('/'));
     }
 }

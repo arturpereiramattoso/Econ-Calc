@@ -2,7 +2,7 @@ use super::ast::{
     AccentKind, BinOp, CmpOp, MathError, MathExpr, MathStatement, PiecewiseBranch, Span,
     SpannedExpr, UnaryOp,
 };
-use super::lexer::{Token, TokenKind, tokenize};
+use super::lexer::{Token, TokenKind, tokenize, tokenize_lenient};
 use std::collections::HashSet;
 
 /// Built-in math function names recognized by the parser and evaluator.
@@ -31,6 +31,7 @@ pub fn is_builtin_function(name: &str) -> bool {
             | "log2"
             | "max"
             | "min"
+            | "nthroot"
             | "round"
             | "sec"
             | "sign"
@@ -44,6 +45,12 @@ pub fn is_builtin_function(name: &str) -> bool {
             | "prod"
             | "int"
             | "diff"
+            | "tangent"
+            | "elasticity"
+            | "marginal"
+            | "average"
+            | "area"
+            | "surplus"
     )
 }
 
@@ -80,7 +87,7 @@ fn is_coordinate_or_const_ident(name: &str) -> bool {
 
 pub fn parse_expr(input: &str) -> Result<SpannedExpr, MathError> {
     let tokens = tokenize(input)?;
-    let mut parser = Parser::new(tokens, None);
+    let mut parser = Parser::new(tokens, None, false);
     let expr = parser.parse_comparison()?;
     parser.expect_eof()?;
     Ok(expr)
@@ -91,7 +98,7 @@ pub fn parse_expr_with_known_fns(
     known_fns: &HashSet<String>,
 ) -> Result<SpannedExpr, MathError> {
     let tokens = tokenize(input)?;
-    let mut parser = Parser::new(tokens, Some(known_fns));
+    let mut parser = Parser::new(tokens, Some(known_fns), false);
     let expr = parser.parse_comparison()?;
     parser.expect_eof()?;
     Ok(expr)
@@ -106,7 +113,21 @@ pub fn parse_statement_with_known_fns(
     known_fns: Option<&HashSet<String>>,
 ) -> Result<MathStatement, MathError> {
     let tokens = tokenize(input)?;
-    let mut parser = Parser::new(tokens, known_fns);
+    let mut parser = Parser::new(tokens, known_fns, false);
+    let stmt = parser.parse_top_level_statement()?;
+    parser.expect_eof()?;
+    Ok(stmt)
+}
+
+/// Structural lenient statement parser for live "Math-as-Written" typing previews.
+/// Produces `MathExpr::Placeholder` slots (`□`) for missing structural operands (`/`, `^`, `_`,
+/// `\frac`, `sqrt()`, `nthroot()`, `\int`, `\sum`, `\prod`, `d/dx`, `=`) without failing.
+pub fn parse_statement_for_preview(
+    input: &str,
+    known_fns: Option<&HashSet<String>>,
+) -> Result<MathStatement, MathError> {
+    let tokens = tokenize_lenient(input)?;
+    let mut parser = Parser::new(tokens, known_fns, true);
     let stmt = parser.parse_top_level_statement()?;
     parser.expect_eof()?;
     Ok(stmt)
@@ -118,17 +139,43 @@ struct Parser<'a> {
     known_fns: Option<&'a HashSet<String>>,
     in_abs_depth: usize,
     in_integral_depth: usize,
+    lenient: bool,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: Vec<Token>, known_fns: Option<&'a HashSet<String>>) -> Self {
+    fn new(tokens: Vec<Token>, known_fns: Option<&'a HashSet<String>>, lenient: bool) -> Self {
         Self {
             tokens,
             pos: 0,
             known_fns,
             in_abs_depth: 0,
             in_integral_depth: 0,
+            lenient,
         }
+    }
+
+    fn is_structural_end(&self) -> bool {
+        matches!(
+            self.peek().kind,
+            TokenKind::Eof
+                | TokenKind::RParen
+                | TokenKind::RBrace
+                | TokenKind::RBracket
+                | TokenKind::Comma
+                | TokenKind::Colon
+                | TokenKind::Semicolon
+                | TokenKind::Eq
+                | TokenKind::EqEq
+                | TokenKind::Ne
+                | TokenKind::Lt
+                | TokenKind::Le
+                | TokenKind::Gt
+                | TokenKind::Ge
+        )
+    }
+
+    fn placeholder_here(&self) -> SpannedExpr {
+        SpannedExpr::new(MathExpr::Placeholder, self.peek().span)
     }
 
     fn peek(&self) -> &Token {
@@ -192,7 +239,11 @@ impl<'a> Parser<'a> {
         match self.peek().kind {
             TokenKind::Eq => {
                 self.advance();
-                let rhs = self.parse_comparison()?;
+                let rhs = if self.lenient && self.is_eof() {
+                    self.placeholder_here()
+                } else {
+                    self.parse_comparison()?
+                };
 
                 // 1. Function definition: `f(x) = ...`, `f(x, y) = ...`, `r(theta) = ...`, `p(t) = (x(t), y(t))`
                 if let MathExpr::Call {
@@ -245,7 +296,9 @@ impl<'a> Parser<'a> {
                         return Ok(MathStatement::Equation { lhs, rhs });
                     }
                     // 4. Scalar/parameter assignment if RHS has no free coordinate variables
-                    if !expr_mentions_any(&rhs, &["x", "y", "t", "theta"]) {
+                    if !expr_mentions_any(&rhs, &["x", "y", "t", "theta"])
+                        && !matches!(rhs.expr, MathExpr::Restricted { .. })
+                    {
                         return Ok(MathStatement::ParamAssign {
                             name: ident,
                             value: rhs,
@@ -258,24 +311,35 @@ impl<'a> Parser<'a> {
             }
             TokenKind::Lt | TokenKind::Le | TokenKind::Gt | TokenKind::Ge => {
                 let op = self.consume_cmp_op()?;
-                let rhs = self.parse_additive()?;
+                let rhs = if self.lenient && self.is_eof() {
+                    self.placeholder_here()
+                } else {
+                    self.parse_additive()?
+                };
                 // Check if chained comparison (e.g. `0 <= x <= 10`) -> return as Expr(ComparisonChain)
                 if self.peek_cmp_op().is_some() {
                     let mut rest = vec![(op, rhs)];
                     while self.peek_cmp_op().is_some() {
                         let next_op = self.consume_cmp_op()?;
-                        let next_rhs = self.parse_additive()?;
+                        let next_rhs = if self.lenient && self.is_eof() {
+                            self.placeholder_here()
+                        } else {
+                            self.parse_additive()?
+                        };
                         rest.push((next_op, next_rhs));
                     }
                     let span = lhs.span.merge(rest.last().map(|(_, e)| e.span).unwrap_or(lhs.span));
-                    return Ok(MathStatement::Expr(SpannedExpr::new(
+                    let expr = SpannedExpr::new(
                         MathExpr::ComparisonChain {
                             first: Box::new(lhs),
                             rest,
                         },
                         span,
-                    )));
+                    );
+                    let expr = self.maybe_parse_trailing_restrictions(expr)?;
+                    return Ok(MathStatement::Expr(expr));
                 }
+                let rhs = self.maybe_parse_trailing_restrictions(rhs)?;
                 Ok(MathStatement::Inequality { lhs, op, rhs })
             }
             TokenKind::EqEq | TokenKind::Ne => {
@@ -297,6 +361,7 @@ impl<'a> Parser<'a> {
                 )))
             }
             _ => {
+                let lhs = self.maybe_parse_trailing_restrictions(lhs)?;
                 if let MathExpr::Tuple(mut items) = lhs.expr.clone() {
                     if items.len() == 2 {
                         let y_expr = items.remove(1);
@@ -348,24 +413,105 @@ impl<'a> Parser<'a> {
 
     fn parse_comparison(&mut self) -> Result<SpannedExpr, MathError> {
         let first = self.parse_additive()?;
-        if self.peek_cmp_op().is_none() {
-            return Ok(first);
+        let base = if self.peek_cmp_op().is_none() {
+            first
+        } else {
+            let mut rest = Vec::new();
+            while self.peek_cmp_op().is_some() {
+                let op = self.consume_cmp_op()?;
+                let rhs = if self.lenient && self.is_structural_end() {
+                    self.placeholder_here()
+                } else {
+                    self.parse_additive()?
+                };
+                rest.push((op, rhs));
+            }
+            let end_span = rest.last().map(|(_, e)| e.span).unwrap_or(first.span);
+            let span = first.span.merge(end_span);
+            SpannedExpr::new(
+                MathExpr::ComparisonChain {
+                    first: Box::new(first),
+                    rest,
+                },
+                span,
+            )
+        };
+        self.maybe_parse_trailing_restrictions(base)
+    }
+
+    fn brace_is_restriction(&self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::LBrace) {
+            return false;
         }
-        let mut rest = Vec::new();
-        while self.peek_cmp_op().is_some() {
-            let op = self.consume_cmp_op()?;
-            let rhs = self.parse_additive()?;
-            rest.push((op, rhs));
+        let mut depth = 0usize;
+        let mut idx = self.pos;
+        let mut saw_cmp = false;
+        while idx < self.tokens.len() {
+            match self.tokens[idx].kind {
+                TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+                TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        return saw_cmp;
+                    }
+                }
+                TokenKind::Colon if depth == 1 => return false,
+                TokenKind::Lt
+                | TokenKind::Le
+                | TokenKind::Gt
+                | TokenKind::Ge
+                | TokenKind::EqEq
+                | TokenKind::Ne
+                    if depth == 1 =>
+                {
+                    saw_cmp = true;
+                }
+                TokenKind::Eof => return false,
+                _ => {}
+            }
+            idx += 1;
         }
-        let end_span = rest.last().map(|(_, e)| e.span).unwrap_or(first.span);
-        let span = first.span.merge(end_span);
-        Ok(SpannedExpr::new(
-            MathExpr::ComparisonChain {
-                first: Box::new(first),
-                rest,
-            },
-            span,
-        ))
+        false
+    }
+
+    fn maybe_parse_trailing_restrictions(
+        &mut self,
+        expr: SpannedExpr,
+    ) -> Result<SpannedExpr, MathError> {
+        let mut current = expr;
+        while matches!(self.peek().kind, TokenKind::LBrace) && self.brace_is_restriction() {
+            self.advance(); // `{`
+            let mut restrictions = Vec::new();
+            while !matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+                restrictions.push(self.parse_comparison()?);
+                if matches!(self.peek().kind, TokenKind::Comma | TokenKind::Semicolon) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            let close_span = if matches!(self.peek().kind, TokenKind::RBrace) {
+                self.advance().span
+            } else if self.lenient {
+                self.peek().span
+            } else {
+                return Err(MathError::new(
+                    "Expected `}` to close domain/range restriction",
+                    self.peek().span,
+                ));
+            };
+            if !restrictions.is_empty() {
+                let span = current.span.merge(close_span);
+                current = SpannedExpr::new(
+                    MathExpr::Restricted {
+                        inner: Box::new(current),
+                        restrictions,
+                    },
+                    span,
+                );
+            }
+        }
+        Ok(current)
     }
 
     fn parse_additive(&mut self) -> Result<SpannedExpr, MathError> {
@@ -399,8 +545,8 @@ impl<'a> Parser<'a> {
         match &self.peek().kind {
             TokenKind::Number(_)
             | TokenKind::Ident(_)
-            | TokenKind::LParen
-            | TokenKind::LBrace => true,
+            | TokenKind::LParen => true,
+            TokenKind::LBrace => !self.brace_is_restriction(),
             TokenKind::Pipe => self.in_abs_depth == 0,
             TokenKind::Command(cmd) => matches!(
                 cmd.as_str(),
@@ -457,7 +603,11 @@ impl<'a> Parser<'a> {
                                         let var = var.to_string();
                                         self.advance(); // `/`
                                         self.advance(); // `dx`
-                                        let body = self.parse_unary()?;
+                                        let body = if self.lenient && self.is_structural_end() {
+                                            self.placeholder_here()
+                                        } else {
+                                            self.parse_unary()?
+                                        };
                                         let span = lhs.span.merge(body.span);
                                         lhs = SpannedExpr::new(
                                             MathExpr::Derivative {
@@ -474,8 +624,21 @@ impl<'a> Parser<'a> {
                         }
                     }
 
-                    self.advance();
-                    let rhs = self.parse_unary()?;
+                    let slash_tok = self.advance();
+                    let rhs = if self.lenient
+                        && (self.is_structural_end()
+                            || matches!(
+                                self.peek().kind,
+                                TokenKind::Plus
+                                    | TokenKind::Minus
+                                    | TokenKind::Star
+                                    | TokenKind::Slash
+                            ))
+                    {
+                        SpannedExpr::new(MathExpr::Placeholder, slash_tok.span)
+                    } else {
+                        self.parse_unary()?
+                    };
                     let span = lhs.span.merge(rhs.span);
                     lhs = SpannedExpr::new(
                         MathExpr::Fraction {
@@ -549,8 +712,18 @@ impl<'a> Parser<'a> {
     fn parse_power(&mut self) -> Result<SpannedExpr, MathError> {
         let base = self.parse_postfix()?;
         if matches!(self.peek().kind, TokenKind::Caret) {
-            self.advance();
-            let exp = self.parse_unary()?;
+            let caret_tok = self.advance();
+            let exp = if self.lenient
+                && (self.is_structural_end()
+                    || matches!(
+                        self.peek().kind,
+                        TokenKind::Plus | TokenKind::Star | TokenKind::Slash
+                    ))
+            {
+                SpannedExpr::new(MathExpr::Placeholder, caret_tok.span)
+            } else {
+                self.parse_unary()?
+            };
             let span = base.span.merge(exp.span);
             Ok(SpannedExpr::new(
                 MathExpr::Binary {
@@ -571,8 +744,22 @@ impl<'a> Parser<'a> {
         loop {
             match self.peek().kind {
                 TokenKind::Underscore => {
-                    self.advance();
-                    let sub = self.parse_script_atom()?;
+                    let us_tok = self.advance();
+                    let sub = if self.lenient
+                        && (self.is_structural_end()
+                            || matches!(
+                                self.peek().kind,
+                                TokenKind::Plus
+                                    | TokenKind::Minus
+                                    | TokenKind::Star
+                                    | TokenKind::Slash
+                                    | TokenKind::Caret
+                            ))
+                    {
+                        SpannedExpr::new(MathExpr::Placeholder, us_tok.span)
+                    } else {
+                        self.parse_script_atom()?
+                    };
                     let span = expr.span.merge(sub.span);
                     expr = SpannedExpr::new(
                         MathExpr::Subscript {
@@ -675,6 +862,50 @@ impl<'a> Parser<'a> {
                         if !is_coord || is_multi_arg {
                             let (args, close_span) = self.parse_arg_list()?;
                             let span = expr.span.merge(close_span);
+                            // Normalize `sqrt()` / `nthroot(n, x)` into `MathExpr::Sqrt`
+                            if fn_name == "sqrt" && args.len() <= 1 {
+                                let radicand = args
+                                    .into_iter()
+                                    .next()
+                                    .unwrap_or_else(|| SpannedExpr::new(MathExpr::Placeholder, span));
+                                if matches!(radicand.expr, MathExpr::Placeholder) && !self.lenient {
+                                    return Err(MathError::new("sqrt() requires an argument", span));
+                                }
+                                expr = SpannedExpr::new(
+                                    MathExpr::Sqrt {
+                                        index: None,
+                                        radicand: Box::new(radicand),
+                                    },
+                                    span,
+                                );
+                                continue;
+                            }
+                            if fn_name == "nthroot" {
+                                let mut it = args.into_iter();
+                                let idx = it.next().unwrap_or_else(|| {
+                                    SpannedExpr::new(MathExpr::Placeholder, span)
+                                });
+                                let rad = it.next().unwrap_or_else(|| {
+                                    SpannedExpr::new(MathExpr::Placeholder, span)
+                                });
+                                if (matches!(idx.expr, MathExpr::Placeholder)
+                                    || matches!(rad.expr, MathExpr::Placeholder))
+                                    && !self.lenient
+                                {
+                                    return Err(MathError::new(
+                                        "nthroot(n, x) requires 2 arguments",
+                                        span,
+                                    ));
+                                }
+                                expr = SpannedExpr::new(
+                                    MathExpr::Sqrt {
+                                        index: Some(Box::new(idx)),
+                                        radicand: Box::new(rad),
+                                    },
+                                    span,
+                                );
+                                continue;
+                            }
                             expr = SpannedExpr::new(
                                 MathExpr::Call {
                                     name: fn_name,
@@ -726,21 +957,42 @@ impl<'a> Parser<'a> {
             let close = self.advance();
             return Ok((args, open.span.merge(close.span)));
         }
+        if self.lenient && self.is_eof() {
+            return Ok((args, open.span));
+        }
         loop {
+            if self.lenient && matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof) {
+                break;
+            }
             args.push(self.parse_comparison()?);
             if matches!(self.peek().kind, TokenKind::Comma) {
                 self.advance();
+                if self.lenient && matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof) {
+                    args.push(self.placeholder_here());
+                    break;
+                }
             } else {
                 break;
             }
         }
-        let close = self.expect(TokenKind::RParen, "Expected `)` to close argument list")?;
-        Ok((args, close.span))
+        if matches!(self.peek().kind, TokenKind::RParen) {
+            let close = self.advance();
+            Ok((args, close.span))
+        } else if self.lenient {
+            Ok((args, self.peek().span))
+        } else {
+            Err(MathError::new(
+                "Expected `)` to close argument list",
+                self.peek().span,
+            ))
+        }
     }
 
     fn parse_script_atom(&mut self) -> Result<SpannedExpr, MathError> {
         if matches!(self.peek().kind, TokenKind::LBrace) {
             self.parse_braced_group()
+        } else if self.lenient && self.is_structural_end() {
+            Ok(self.placeholder_here())
         } else {
             self.parse_primary()
         }
@@ -748,9 +1000,26 @@ impl<'a> Parser<'a> {
 
     fn parse_braced_group(&mut self) -> Result<SpannedExpr, MathError> {
         let open = self.expect(TokenKind::LBrace, "Expected `{`")?;
+        if self.lenient && matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+            let end_span = if matches!(self.peek().kind, TokenKind::RBrace) {
+                self.advance().span
+            } else {
+                open.span
+            };
+            return Ok(SpannedExpr::new(
+                MathExpr::Placeholder,
+                open.span.merge(end_span),
+            ));
+        }
         let inner = self.parse_comparison()?;
-        let close = self.expect(TokenKind::RBrace, "Expected `}`")?;
-        Ok(SpannedExpr::new(inner.expr, open.span.merge(close.span)))
+        let close_span = if matches!(self.peek().kind, TokenKind::RBrace) {
+            self.advance().span
+        } else if self.lenient {
+            self.peek().span
+        } else {
+            return Err(MathError::new("Expected `}`", self.peek().span));
+        };
+        Ok(SpannedExpr::new(inner.expr, open.span.merge(close_span)))
     }
 
     fn brace_has_top_level_colon(&self) -> bool {
@@ -828,6 +1097,37 @@ impl<'a> Parser<'a> {
                 let name = name.clone();
                 self.advance();
 
+                // Support non-backslash big operators `int_0^1`, `sum_{i=1}^n`, `prod_{i=1}^n`
+                if matches!(name.as_str(), "int" | "sum" | "prod")
+                    && (matches!(self.peek().kind, TokenKind::Underscore | TokenKind::Caret)
+                        || (self.lenient && self.is_eof()))
+                {
+                    return self.parse_latex_command(&name, tok.span);
+                }
+
+                // Lenient bare `sqrt` / `nthroot` at end of input -> immediate radical with slot
+                if self.lenient && name == "sqrt" && self.is_eof() {
+                    return Ok(SpannedExpr::new(
+                        MathExpr::Sqrt {
+                            index: None,
+                            radicand: Box::new(SpannedExpr::new(MathExpr::Placeholder, tok.span)),
+                        },
+                        tok.span,
+                    ));
+                }
+                if self.lenient && name == "nthroot" && self.is_eof() {
+                    return Ok(SpannedExpr::new(
+                        MathExpr::Sqrt {
+                            index: Some(Box::new(SpannedExpr::new(
+                                MathExpr::Placeholder,
+                                tok.span,
+                            ))),
+                            radicand: Box::new(SpannedExpr::new(MathExpr::Placeholder, tok.span)),
+                        },
+                        tok.span,
+                    ));
+                }
+
                 // Support `\sin^2(x)` / `sin^2(x)` -> `(sin(x))^2`
                 if is_prefix_math_func(&name) && matches!(self.peek().kind, TokenKind::Caret) {
                     let saved = self.pos;
@@ -890,38 +1190,116 @@ impl<'a> Parser<'a> {
             }
             TokenKind::LParen => {
                 let open = self.advance();
+                if self.lenient && matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof) {
+                    let close_span = if matches!(self.peek().kind, TokenKind::RParen) {
+                        self.advance().span
+                    } else {
+                        open.span
+                    };
+                    return Ok(SpannedExpr::new(
+                        MathExpr::Group(Box::new(SpannedExpr::new(
+                            MathExpr::Placeholder,
+                            open.span,
+                        ))),
+                        open.span.merge(close_span),
+                    ));
+                }
                 let first = self.parse_comparison()?;
                 if matches!(self.peek().kind, TokenKind::Comma) {
                     let mut items = vec![first];
                     while matches!(self.peek().kind, TokenKind::Comma) {
                         self.advance();
+                        if self.lenient
+                            && matches!(self.peek().kind, TokenKind::RParen | TokenKind::Eof)
+                        {
+                            items.push(self.placeholder_here());
+                            break;
+                        }
                         items.push(self.parse_comparison()?);
                     }
-                    let close = self.expect(TokenKind::RParen, "Expected `)` to close tuple")?;
+                    let close_span = if matches!(self.peek().kind, TokenKind::RParen) {
+                        self.advance().span
+                    } else if self.lenient {
+                        self.peek().span
+                    } else {
+                        return Err(MathError::new(
+                            "Expected `)` to close tuple",
+                            self.peek().span,
+                        ));
+                    };
                     Ok(SpannedExpr::new(
                         MathExpr::Tuple(items),
-                        open.span.merge(close.span),
+                        open.span.merge(close_span),
                     ))
                 } else {
-                    let close =
-                        self.expect(TokenKind::RParen, "Expected `)` to close parenthesized group")?;
+                    let close_span = if matches!(self.peek().kind, TokenKind::RParen) {
+                        self.advance().span
+                    } else if self.lenient {
+                        self.peek().span
+                    } else {
+                        return Err(MathError::new(
+                            "Expected `)` to close parenthesized group",
+                            self.peek().span,
+                        ));
+                    };
                     Ok(SpannedExpr::new(
                         MathExpr::Group(Box::new(first)),
-                        open.span.merge(close.span),
+                        open.span.merge(close_span),
                     ))
                 }
             }
+            TokenKind::Slash if self.lenient => {
+                // Leading `/` alone or `/den` -> immediate fraction with empty numerator slot `□`
+                let slash = self.advance();
+                let den = if self.is_structural_end()
+                    || matches!(self.peek().kind, TokenKind::Plus | TokenKind::Minus)
+                {
+                    SpannedExpr::new(MathExpr::Placeholder, slash.span)
+                } else {
+                    self.parse_unary()?
+                };
+                let span = slash.span.merge(den.span);
+                Ok(SpannedExpr::new(
+                    MathExpr::Fraction {
+                        num: Box::new(SpannedExpr::new(MathExpr::Placeholder, slash.span)),
+                        den: Box::new(den),
+                    },
+                    span,
+                ))
+            }
             TokenKind::Pipe => {
                 let open = self.advance();
+                if self.lenient && matches!(self.peek().kind, TokenKind::Pipe | TokenKind::Eof) {
+                    let close_span = if matches!(self.peek().kind, TokenKind::Pipe) {
+                        self.advance().span
+                    } else {
+                        open.span
+                    };
+                    return Ok(SpannedExpr::new(
+                        MathExpr::Abs(Box::new(SpannedExpr::new(
+                            MathExpr::Placeholder,
+                            open.span,
+                        ))),
+                        open.span.merge(close_span),
+                    ));
+                }
                 self.in_abs_depth += 1;
                 let inner_res = self.parse_comparison();
                 self.in_abs_depth -= 1;
                 let inner = inner_res?;
-                let close =
-                    self.expect(TokenKind::Pipe, "Expected closing `|` for absolute value")?;
+                let close_span = if matches!(self.peek().kind, TokenKind::Pipe) {
+                    self.advance().span
+                } else if self.lenient {
+                    self.peek().span
+                } else {
+                    return Err(MathError::new(
+                        "Expected closing `|` for absolute value",
+                        self.peek().span,
+                    ));
+                };
                 Ok(SpannedExpr::new(
                     MathExpr::Abs(Box::new(inner)),
-                    open.span.merge(close.span),
+                    open.span.merge(close_span),
                 ))
             }
             TokenKind::LBrace => {
@@ -944,12 +1322,17 @@ impl<'a> Parser<'a> {
 
     fn parse_latex_command(&mut self, cmd: &str, cmd_span: Span) -> Result<SpannedExpr, MathError> {
         match cmd {
+            "square" if self.lenient => Ok(SpannedExpr::new(MathExpr::Placeholder, cmd_span)),
             "frac" => {
                 let num = self.parse_script_atom()?;
                 let den = self.parse_script_atom()?;
                 // Detect `\frac{d}{dx}` or `\frac{d^2}{dx^2}`
                 if let Some((var, order)) = detect_derivative_frac(&num, &den) {
-                    let body = self.parse_unary()?;
+                    let body = if self.lenient && self.is_structural_end() {
+                        self.placeholder_here()
+                    } else {
+                        self.parse_unary()?
+                    };
                     let span = cmd_span.merge(body.span);
                     return Ok(SpannedExpr::new(
                         MathExpr::Derivative {
@@ -972,8 +1355,21 @@ impl<'a> Parser<'a> {
             "sqrt" => {
                 let index = if matches!(self.peek().kind, TokenKind::LBracket) {
                     self.advance();
-                    let idx_expr = self.parse_comparison()?;
-                    self.expect(TokenKind::RBracket, "Expected `]` after radical index")?;
+                    let idx_expr = if self.lenient
+                        && matches!(self.peek().kind, TokenKind::RBracket | TokenKind::Eof)
+                    {
+                        self.placeholder_here()
+                    } else {
+                        self.parse_comparison()?
+                    };
+                    if matches!(self.peek().kind, TokenKind::RBracket) {
+                        self.advance();
+                    } else if !self.lenient {
+                        return Err(MathError::new(
+                            "Expected `]` after radical index",
+                            self.peek().span,
+                        ));
+                    }
                     Some(Box::new(idx_expr))
                 } else {
                     None
@@ -1012,7 +1408,11 @@ impl<'a> Parser<'a> {
             "sum" | "prod" => {
                 let is_sum = cmd == "sum";
                 let (var, lower, upper) = self.parse_big_op_bounds(cmd_span, true)?;
-                let body = self.parse_multiplicative()?;
+                let body = if self.lenient && self.is_structural_end() {
+                    self.placeholder_here()
+                } else {
+                    self.parse_multiplicative()?
+                };
                 let span = cmd_span.merge(body.span);
                 let node = if is_sum {
                     MathExpr::Sum {
@@ -1033,10 +1433,14 @@ impl<'a> Parser<'a> {
             }
             "int" => {
                 let (_default_var, lower, upper) = self.parse_big_op_bounds(cmd_span, false)?;
-                self.in_integral_depth += 1;
-                let body_res = self.parse_additive();
-                self.in_integral_depth -= 1;
-                let body = body_res?;
+                let body = if self.lenient && self.is_structural_end() {
+                    self.placeholder_here()
+                } else {
+                    self.in_integral_depth += 1;
+                    let body_res = self.parse_additive();
+                    self.in_integral_depth -= 1;
+                    body_res?
+                };
 
                 // Consume optional `dx` or `d x`
                 let (var, end_span) = self.consume_optional_differential(body.span);
@@ -1084,18 +1488,29 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let (var, lower) = lower_opt.ok_or_else(|| {
-            MathError::new(
-                "Expected lower bound `_{...}` on big operator",
-                op_span,
-            )
-        })?;
-        let upper = upper_opt.ok_or_else(|| {
-            MathError::new(
-                "Expected upper bound `^{...}` on big operator",
-                op_span,
-            )
-        })?;
+        let (var, lower) = match lower_opt {
+            Some(pair) => pair,
+            None if self.lenient => (
+                if expect_var_eq { "i" } else { "x" }.to_string(),
+                SpannedExpr::new(MathExpr::Placeholder, op_span),
+            ),
+            None => {
+                return Err(MathError::new(
+                    "Expected lower bound `_{...}` on big operator",
+                    op_span,
+                ));
+            }
+        };
+        let upper = match upper_opt {
+            Some(hi) => hi,
+            None if self.lenient => SpannedExpr::new(MathExpr::Placeholder, op_span),
+            None => {
+                return Err(MathError::new(
+                    "Expected upper bound `^{...}` on big operator",
+                    op_span,
+                ));
+            }
+        };
         Ok((var, lower, upper))
     }
 
@@ -1104,19 +1519,38 @@ impl<'a> Parser<'a> {
         if braced {
             self.advance();
         }
+        if self.lenient && matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+            if braced && matches!(self.peek().kind, TokenKind::RBrace) {
+                self.advance();
+            }
+            return Ok(("i".to_string(), self.placeholder_here()));
+        }
         let first = self.parse_additive()?;
         let result = if matches!(self.peek().kind, TokenKind::Eq) {
             self.advance();
             let var = first.as_canonical_ident().ok_or_else(|| {
                 MathError::new("Expected index variable before `=`", first.span)
             })?;
-            let start_expr = self.parse_additive()?;
+            let start_expr = if self.lenient
+                && matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof)
+            {
+                self.placeholder_here()
+            } else {
+                self.parse_additive()?
+            };
             (var, start_expr)
         } else {
             ("i".to_string(), first)
         };
         if braced {
-            self.expect(TokenKind::RBrace, "Expected `}` after lower bound")?;
+            if matches!(self.peek().kind, TokenKind::RBrace) {
+                self.advance();
+            } else if !self.lenient {
+                return Err(MathError::new(
+                    "Expected `}` after lower bound",
+                    self.peek().span,
+                ));
+            }
         }
         Ok(result)
     }
@@ -1264,6 +1698,14 @@ pub fn expr_mentions_any(expr: &SpannedExpr, targets: &[&str]) -> bool {
                 .unwrap_or(false)
                 || expr_mentions_any(&b.value, targets)
         }),
+        MathExpr::Restricted {
+            inner,
+            restrictions,
+        } => {
+            expr_mentions_any(inner, targets)
+                || restrictions.iter().any(|r| expr_mentions_any(r, targets))
+        }
+        MathExpr::Placeholder => false,
         MathExpr::MemberAccess { .. } => false,
         MathExpr::Index { target, index } => {
             expr_mentions_any(target, targets) || expr_mentions_any(index, targets)
