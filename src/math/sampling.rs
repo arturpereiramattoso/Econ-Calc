@@ -173,7 +173,9 @@ pub fn sample_parametric_branches(
         let y_val = y_compiled.eval_with_bound_slots(ctx, &mut y_scratch).ok();
 
         match (x_val, y_val) {
-            (Some(x), Some(y)) if x.is_finite() && y.is_finite() && x.abs() < 1e6 && y.abs() < 1e6 => {
+            (Some(x), Some(y))
+                if x.is_finite() && y.is_finite() && x.abs() < 1e6 && y.abs() < 1e6 =>
+            {
                 current.push([x, y]);
             }
             _ => {
@@ -208,7 +210,11 @@ pub fn sample_polar_branches(
     let mut scratch = EvalScratch::new();
     r_compiled.bind_slots(
         ctx,
-        &[(param_name, theta_min), ("theta", theta_min), ("t", theta_min)],
+        &[
+            (param_name, theta_min),
+            ("theta", theta_min),
+            ("t", theta_min),
+        ],
         &mut scratch,
     );
     let slots: Vec<usize> = [param_name, "theta", "t"]
@@ -394,10 +400,7 @@ pub fn sample_implicit_contours(
     chain_contour_segments(segments, (dx.min(dy)) * 0.05_f64)
 }
 
-fn chain_contour_segments(
-    segments: Vec<([f64; 2], [f64; 2])>,
-    tol: f64,
-) -> Vec<Vec<[f64; 2]>> {
+fn chain_contour_segments(segments: Vec<([f64; 2], [f64; 2])>, tol: f64) -> Vec<Vec<[f64; 2]>> {
     if segments.is_empty() {
         return Vec::new();
     }
@@ -541,8 +544,16 @@ pub fn sample_implicit_2d_inequality(
     grid_x: usize,
     grid_y: usize,
 ) -> InequalityRegion {
-    let boundary_curves =
-        sample_implicit_contours(diff_compiled, ctx, x_min, x_max, y_min, y_max, grid_x, grid_y);
+    let boundary_curves = sample_implicit_contours(
+        diff_compiled,
+        ctx,
+        x_min,
+        x_max,
+        y_min,
+        y_max,
+        grid_x,
+        grid_y,
+    );
     let strict = matches!(op, CmpOp::Lt | CmpOp::Gt);
 
     // Build merged horizontal scanline rectangles where `diff op 0` holds

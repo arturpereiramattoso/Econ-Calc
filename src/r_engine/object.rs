@@ -111,17 +111,12 @@ impl RObject {
     pub fn as_character_options(&self) -> Vec<Option<String>> {
         match self {
             RObject::Character(v) => v.clone(),
-            RObject::Numeric(v) => v
-                .iter()
-                .map(|opt| opt.map(format_r_num))
-                .collect(),
+            RObject::Numeric(v) => v.iter().map(|opt| opt.map(format_r_num)).collect(),
             RObject::Logical(v) => v
                 .iter()
                 .map(|opt| opt.map(|b| if b { "TRUE" } else { "FALSE" }.to_string()))
                 .collect(),
-            RObject::Matrix { data, .. } => {
-                data.iter().map(|opt| opt.map(format_r_num)).collect()
-            }
+            RObject::Matrix { data, .. } => data.iter().map(|opt| opt.map(format_r_num)).collect(),
             _ => Vec::new(),
         }
     }
@@ -149,7 +144,13 @@ impl RObject {
             RObject::Matrix { data, .. } => data.len(),
             RObject::List(m) => m.len(),
             RObject::DataFrame { columns, .. } => columns.len(),
-            RObject::Formula { lhs, .. } => if lhs.is_some() { 3 } else { 2 },
+            RObject::Formula { lhs, .. } => {
+                if lhs.is_some() {
+                    3
+                } else {
+                    2
+                }
+            }
             RObject::Closure { .. } => 1,
         }
     }
@@ -280,13 +281,15 @@ impl RObject {
                     let mut row_items = Vec::with_capacity(max_c);
                     for c in 0..max_c {
                         let val = data.get(c * nrow + r).copied().flatten();
-                        row_items.push(
-                            val.map(format_r_num)
-                                .unwrap_or_else(|| "NA".to_string()),
-                        );
+                        row_items.push(val.map(format_r_num).unwrap_or_else(|| "NA".to_string()));
                     }
                     let ellipsis = if *ncol > max_c { " ..." } else { "" };
-                    lines.push(format!("  [{},] {}{}", r + 1, row_items.join("  "), ellipsis));
+                    lines.push(format!(
+                        "  [{},] {}{}",
+                        r + 1,
+                        row_items.join("  "),
+                        ellipsis
+                    ));
                 }
                 if *nrow > max_r {
                     lines.push(format!("  ... ({} more rows)", nrow - max_r));
@@ -310,7 +313,10 @@ impl RObject {
                         .get("coefficients")
                         .map(|c| c.preview_string())
                         .unwrap_or_default();
-                    return format!("Call: {} | R² = {:.4}\nCoefficients: {}", call_str, r2, coef_str);
+                    return format!(
+                        "Call: {} | R² = {:.4}\nCoefficients: {}",
+                        call_str, r2, coef_str
+                    );
                 }
                 let mut lines = Vec::new();
                 for (i, (k, v)) in map.iter().take(6).enumerate() {
@@ -375,7 +381,12 @@ impl RObject {
                     columns.len()
                 )];
                 for (name, col) in columns {
-                    out.push(format!(" $ {}: {} {}", name, col.type_summary(), col.preview_string()));
+                    out.push(format!(
+                        " $ {}: {} {}",
+                        name,
+                        col.type_summary(),
+                        col.preview_string()
+                    ));
                 }
                 out.join("\n")
             }

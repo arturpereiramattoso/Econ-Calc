@@ -1,5 +1,5 @@
 use crate::collections::IndexMap;
-use crate::ui::bento::{CURVE_COLOR_SWATCHES, ThemePalette, pill_button};
+use crate::ui::bento::{pill_button, ThemePalette, CURVE_COLOR_SWATCHES};
 use eframe::egui::{self, Color32, FontId, Pos2, RichText, Sense, Stroke, Ui, Vec2};
 use egui_plot::LineStyle;
 use std::collections::VecDeque;
@@ -266,7 +266,7 @@ pub struct FunctionStyle {
 impl FunctionStyle {
     pub fn default_for_index(idx: usize) -> Self {
         let palette = [
-            Color32::from_rgb(184, 74, 57),  // Cinnabar Rubric / Kinnabari (#B84A39)
+            Color32::from_rgb(184, 74, 57), // Cinnabar Rubric / Kinnabari (#B84A39)
             Color32::from_rgb(72, 118, 168), // Lapis Lazuli (#4876A8)
             Color32::from_rgb(76, 142, 104), // Malachite / Prasinos (#4C8E68)
             Color32::from_rgb(196, 152, 68), // Ochre Gold / Chrysochra (#C49844)
@@ -327,9 +327,7 @@ pub enum SymbolicCellKind {
         highlight_roots: bool,
     },
     /// Dedicated parameter slider cell backed by `workspace.parameters[param_name]`.
-    Slider {
-        param_name: String,
-    },
+    Slider { param_name: String },
     /// Collapsible folder grouping child cells (`folder_id == Some(folder.id)`).
     Folder {
         title: String,
@@ -337,9 +335,7 @@ pub enum SymbolicCellKind {
         visible: bool,
     },
     /// Inline economic / mathematical explanatory note cell.
-    Note {
-        text: String,
-    },
+    Note { text: String },
     /// Interactive function value table `(x, f(x), f'(x))` synced to Data Viewer & R `data.frame`.
     Table {
         fn_sig: String,
@@ -581,17 +577,26 @@ pub fn render_gutter_curve_badge(
             }
             (CurveLineStyle::Solid, false) => {
                 p.line_segment(
-                    [Pos2::new(center.x - 5.0_f32, y + 1.5_f32), Pos2::new(center.x + 5.0_f32, y - 1.5_f32)],
+                    [
+                        Pos2::new(center.x - 5.0_f32, y + 1.5_f32),
+                        Pos2::new(center.x + 5.0_f32, y - 1.5_f32),
+                    ],
                     Stroke::new(1.7_f32, ink),
                 );
             }
             (CurveLineStyle::Dashed, false) => {
                 p.line_segment(
-                    [Pos2::new(center.x - 5.2_f32, y), Pos2::new(center.x - 1.2_f32, y)],
+                    [
+                        Pos2::new(center.x - 5.2_f32, y),
+                        Pos2::new(center.x - 1.2_f32, y),
+                    ],
                     Stroke::new(1.7_f32, ink),
                 );
                 p.line_segment(
-                    [Pos2::new(center.x + 1.2_f32, y), Pos2::new(center.x + 5.2_f32, y)],
+                    [
+                        Pos2::new(center.x + 1.2_f32, y),
+                        Pos2::new(center.x + 5.2_f32, y),
+                    ],
                     Stroke::new(1.7_f32, ink),
                 );
             }
@@ -603,7 +608,11 @@ pub fn render_gutter_curve_badge(
         }
     } else {
         p.circle_filled(center, radius, pal.extreme_bg);
-        p.circle_stroke(center, radius, Stroke::new(1.8_f32, color.gamma_multiply(0.65_f32)));
+        p.circle_stroke(
+            center,
+            radius,
+            Stroke::new(1.8_f32, color.gamma_multiply(0.65_f32)),
+        );
     }
     resp
 }
@@ -656,10 +665,7 @@ pub fn render_curve_appearance_controls(
     });
     ui.horizontal(|ui| {
         ui.label(RichText::new("Opacity (α):").color(pal.text_secondary));
-        ui.add(
-            egui::Slider::new(&mut style.opacity, 0.1_f32..=1.0_f32)
-                .max_decimals(2),
-        );
+        ui.add(egui::Slider::new(&mut style.opacity, 0.1_f32..=1.0_f32).max_decimals(2));
     });
 
     ui.add_space(4.0_f32);
@@ -698,11 +704,8 @@ pub fn render_curve_appearance_controls(
                 let c = rect.center();
                 ui.painter().circle_filled(c, 9.5_f32, swatch);
                 if selected {
-                    ui.painter().circle_stroke(
-                        c,
-                        10.5_f32,
-                        Stroke::new(1.5_f32, pal.text_primary),
-                    );
+                    ui.painter()
+                        .circle_stroke(c, 10.5_f32, Stroke::new(1.5_f32, pal.text_primary));
                     ui.painter().text(
                         c,
                         egui::Align2::CENTER_CENTER,

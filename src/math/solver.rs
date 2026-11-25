@@ -105,7 +105,10 @@ where
         let (Some(yl), Some(ym), Some(yr)) = (yl_opt, ym_opt, yr_opt) else {
             continue;
         };
-        if ym.abs() <= yl.abs() && ym.abs() <= yr.abs() && ym.abs() < 0.25_f64 * (yl.abs() + yr.abs() + 1e-3_f64) {
+        if ym.abs() <= yl.abs()
+            && ym.abs() <= yr.abs()
+            && ym.abs() < 0.25_f64 * (yl.abs() + yr.abs() + 1e-3_f64)
+        {
             if let Some((best_x, best_abs)) = golden_min_abs(&mut f, xl, xr, 36) {
                 if best_abs < 1e-6_f64 && (best_x - xm).abs() <= dx * 1.5_f64 {
                     push_unique(&mut roots, best_x);
@@ -438,10 +441,7 @@ pub fn detect_curve_pois(
                         x: ix,
                         y: iy,
                         kind: PoiKind::Intersection,
-                        label: format!(
-                            "{} ∩ {} ({:.3}, {:.3})",
-                            target_name, other_name, ix, iy
-                        ),
+                        label: format!("{} ∩ {} ({:.3}, {:.3})", target_name, other_name, ix, iy),
                     });
                 }
             }

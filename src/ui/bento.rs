@@ -52,46 +52,46 @@ impl ThemePalette {
         if dark {
             // "Vigília" — Monastic Charcoal, Walnut, Linen & Mineral Pigments
             Self {
-                outer_bg: Color32::from_rgb(19, 17, 15),         // #13110F (Atramentum / Charcoal)
-                card_bg: Color32::from_rgb(28, 25, 22),          // #1C1916 (Dark Walnut)
-                card_header_bg: Color32::from_rgb(36, 32, 28),   // #24201C (Cedar Header)
-                extreme_bg: Color32::from_rgb(15, 14, 12),       // #0F0E0C (Deep Inkwell)
-                plot_bg: Color32::from_rgb(18, 16, 14),          // #12100E (Abax Slate)
-                sub_card_bg: Color32::from_rgb(38, 34, 29),      // #26221D (Kellion Cell)
-                pill_bg: Color32::from_rgb(43, 38, 32),          // #2B2620
-                pill_hover: Color32::from_rgb(56, 49, 41),       // #383129
-                pill_active: Color32::from_rgb(76, 108, 142),    // #4C6C8E (Tempered Lapis)
-                border: Color32::from_rgb(58, 51, 43),           // #3A332B (Aged Bronze / Umber)
-                text_primary: Color32::from_rgb(232, 224, 206),  // #E8E0CE (Unbleached Linen)
+                outer_bg: Color32::from_rgb(19, 17, 15), // #13110F (Atramentum / Charcoal)
+                card_bg: Color32::from_rgb(28, 25, 22),  // #1C1916 (Dark Walnut)
+                card_header_bg: Color32::from_rgb(36, 32, 28), // #24201C (Cedar Header)
+                extreme_bg: Color32::from_rgb(15, 14, 12), // #0F0E0C (Deep Inkwell)
+                plot_bg: Color32::from_rgb(18, 16, 14),  // #12100E (Abax Slate)
+                sub_card_bg: Color32::from_rgb(38, 34, 29), // #26221D (Kellion Cell)
+                pill_bg: Color32::from_rgb(43, 38, 32),  // #2B2620
+                pill_hover: Color32::from_rgb(56, 49, 41), // #383129
+                pill_active: Color32::from_rgb(76, 108, 142), // #4C6C8E (Tempered Lapis)
+                border: Color32::from_rgb(58, 51, 43),   // #3A332B (Aged Bronze / Umber)
+                text_primary: Color32::from_rgb(232, 224, 206), // #E8E0CE (Unbleached Linen)
                 text_secondary: Color32::from_rgb(176, 166, 148), // #B0A694 (Warm Limestone)
-                text_muted: Color32::from_rgb(124, 114, 99),     // #7C7263 (Muted Sepia)
-                accent_blue: Color32::from_rgb(112, 152, 192),   // #7098C0 (Lapis Lazuli)
-                accent_red: Color32::from_rgb(196, 88, 72),      // #C45848 (Cinnabar Rubric)
-                accent_green: Color32::from_rgb(92, 158, 122),   // #5C9E7A (Malachite)
-                accent_amber: Color32::from_rgb(206, 162, 78),   // #CEA24E (Ochre Gold / Sankir)
+                text_muted: Color32::from_rgb(124, 114, 99), // #7C7263 (Muted Sepia)
+                accent_blue: Color32::from_rgb(112, 152, 192), // #7098C0 (Lapis Lazuli)
+                accent_red: Color32::from_rgb(196, 88, 72), // #C45848 (Cinnabar Rubric)
+                accent_green: Color32::from_rgb(92, 158, 122), // #5C9E7A (Malachite)
+                accent_amber: Color32::from_rgb(206, 162, 78), // #CEA24E (Ochre Gold / Sankir)
                 accent_purple: Color32::from_rgb(158, 118, 152), // #9E7698 (Porphyry)
             }
         } else {
             // "Pergaminho" — Scriptorium Vellum, Iron-Gall Ink & Mineral Rubrics
             Self {
-                outer_bg: Color32::from_rgb(228, 220, 205),      // #E4DCCD (Binding Linen)
-                card_bg: Color32::from_rgb(245, 239, 228),       // #F5EFE4 (Cotton Parchment)
+                outer_bg: Color32::from_rgb(228, 220, 205), // #E4DCCD (Binding Linen)
+                card_bg: Color32::from_rgb(245, 239, 228),  // #F5EFE4 (Cotton Parchment)
                 card_header_bg: Color32::from_rgb(236, 229, 215), // #ECE5D7 (Folio Margin)
-                extreme_bg: Color32::from_rgb(250, 246, 238),    // #FAF6EE (Clean Vellum)
-                plot_bg: Color32::from_rgb(248, 243, 233),       // #F8F3E9 (Geometric Folio)
-                sub_card_bg: Color32::from_rgb(239, 232, 219),   // #EFE8DB
-                pill_bg: Color32::from_rgb(230, 222, 206),       // #E6DECE
-                pill_hover: Color32::from_rgb(214, 204, 185),    // #D6CCB9
-                pill_active: Color32::from_rgb(52, 86, 126),     // #34567E (Byzantine Ultramarine)
-                border: Color32::from_rgb(198, 188, 170),        // #C6BCAA (Rule Line)
-                text_primary: Color32::from_rgb(34, 29, 24),     // #221D18 (Iron-Gall Ink)
-                text_secondary: Color32::from_rgb(92, 82, 70),   // #5C5246 (Walnut Sepia)
-                text_muted: Color32::from_rgb(132, 120, 104),    // #847868 (Warm Earth Gray)
-                accent_blue: Color32::from_rgb(46, 82, 126),     // #2E527E (Lapis Lazuli)
-                accent_red: Color32::from_rgb(168, 56, 43),      // #A8382B (Cinnabar Rubric)
-                accent_green: Color32::from_rgb(48, 114, 80),    // #307250 (Deep Malachite)
-                accent_amber: Color32::from_rgb(166, 116, 34),   // #A67422 (Raw Ochre)
-                accent_purple: Color32::from_rgb(118, 68, 106),  // #76446A (Imperial Porphyry)
+                extreme_bg: Color32::from_rgb(250, 246, 238), // #FAF6EE (Clean Vellum)
+                plot_bg: Color32::from_rgb(248, 243, 233),  // #F8F3E9 (Geometric Folio)
+                sub_card_bg: Color32::from_rgb(239, 232, 219), // #EFE8DB
+                pill_bg: Color32::from_rgb(230, 222, 206),  // #E6DECE
+                pill_hover: Color32::from_rgb(214, 204, 185), // #D6CCB9
+                pill_active: Color32::from_rgb(52, 86, 126), // #34567E (Byzantine Ultramarine)
+                border: Color32::from_rgb(198, 188, 170),   // #C6BCAA (Rule Line)
+                text_primary: Color32::from_rgb(34, 29, 24), // #221D18 (Iron-Gall Ink)
+                text_secondary: Color32::from_rgb(92, 82, 70), // #5C5246 (Walnut Sepia)
+                text_muted: Color32::from_rgb(132, 120, 104), // #847868 (Warm Earth Gray)
+                accent_blue: Color32::from_rgb(46, 82, 126), // #2E527E (Lapis Lazuli)
+                accent_red: Color32::from_rgb(168, 56, 43), // #A8382B (Cinnabar Rubric)
+                accent_green: Color32::from_rgb(48, 114, 80), // #307250 (Deep Malachite)
+                accent_amber: Color32::from_rgb(166, 116, 34), // #A67422 (Raw Ochre)
+                accent_purple: Color32::from_rgb(118, 68, 106), // #76446A (Imperial Porphyry)
             }
         }
     }
@@ -161,7 +161,8 @@ pub fn apply_bento_theme(ctx: &egui::Context, dark: bool) {
     // Hovered widgets
     visuals.widgets.hovered.bg_fill = pal.pill_hover;
     visuals.widgets.hovered.weak_bg_fill = pal.pill_hover;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, pal.accent_blue.gamma_multiply(0.75_f32));
+    visuals.widgets.hovered.bg_stroke =
+        Stroke::new(1.0_f32, pal.accent_blue.gamma_multiply(0.75_f32));
     visuals.widgets.hovered.fg_stroke = Stroke::new(1.0_f32, pal.text_primary);
     visuals.widgets.hovered.rounding = Rounding::same(5.0_f32);
 
@@ -467,16 +468,16 @@ pub fn capsule_frame(pal: ThemePalette, border_color: Color32) -> egui::Frame {
 
 /// Curated mineral & manuscript curve swatch palette (Byzantine & Russian iconographic pigments).
 pub const CURVE_COLOR_SWATCHES: &[Color32] = &[
-    Color32::from_rgb(184, 74, 57),   // Cinnabar Rubric / Kinnabari (#B84A39)
-    Color32::from_rgb(72, 118, 168),  // Lapis Lazuli (#4876A8)
-    Color32::from_rgb(76, 142, 104),  // Malachite / Prasinos (#4C8E68)
-    Color32::from_rgb(196, 152, 68),  // Ochre Gold / Chrysochra (#C49844)
-    Color32::from_rgb(142, 92, 130),  // Imperial Porphyry (#8E5C82)
-    Color32::from_rgb(168, 104, 62),  // Burnt Sienna (#A8683E)
-    Color32::from_rgb(68, 132, 136),  // Azurite Verdigris (#448488)
-    Color32::from_rgb(154, 74, 88),   // Madder Carmine / Rubia (#9A4A58)
-    Color32::from_rgb(118, 136, 78),  // Monastic Olive / Elaia (#76884E)
-    Color32::from_rgb(138, 112, 90),  // Raw Umber (#8A705A)
+    Color32::from_rgb(184, 74, 57), // Cinnabar Rubric / Kinnabari (#B84A39)
+    Color32::from_rgb(72, 118, 168), // Lapis Lazuli (#4876A8)
+    Color32::from_rgb(76, 142, 104), // Malachite / Prasinos (#4C8E68)
+    Color32::from_rgb(196, 152, 68), // Ochre Gold / Chrysochra (#C49844)
+    Color32::from_rgb(142, 92, 130), // Imperial Porphyry (#8E5C82)
+    Color32::from_rgb(168, 104, 62), // Burnt Sienna (#A8683E)
+    Color32::from_rgb(68, 132, 136), // Azurite Verdigris (#448488)
+    Color32::from_rgb(154, 74, 88), // Madder Carmine / Rubia (#9A4A58)
+    Color32::from_rgb(118, 136, 78), // Monastic Olive / Elaia (#76884E)
+    Color32::from_rgb(138, 112, 90), // Raw Umber (#8A705A)
     Color32::from_rgb(214, 204, 184), // Limestone Chalk / Creta (#D6CCB8)
     Color32::from_rgb(128, 122, 112), // Silverpoint Lead / Plumbum (#807A70)
 ];

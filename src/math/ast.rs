@@ -378,9 +378,18 @@ impl MathStatement {
                 x_expr,
                 y_expr,
             } => {
-                let tuple = format!("\\left({}, {}\\right)", x_expr.to_latex(), y_expr.to_latex());
+                let tuple = format!(
+                    "\\left({}, {}\\right)",
+                    x_expr.to_latex(),
+                    y_expr.to_latex()
+                );
                 if let Some(n) = name {
-                    format!("{}({}) = {}", ident_to_latex(n), ident_to_latex(param), tuple)
+                    format!(
+                        "{}({}) = {}",
+                        ident_to_latex(n),
+                        ident_to_latex(param),
+                        tuple
+                    )
                 } else {
                     tuple
                 }
@@ -415,7 +424,12 @@ impl MathStatement {
                 format!("{} = {}", lhs.to_symbolic(), rhs.to_symbolic())
             }
             MathStatement::Inequality { lhs, op, rhs } => {
-                format!("{} {} {}", lhs.to_symbolic(), op.as_unicode(), rhs.to_symbolic())
+                format!(
+                    "{} {} {}",
+                    lhs.to_symbolic(),
+                    op.as_unicode(),
+                    rhs.to_symbolic()
+                )
             }
             MathStatement::Parametric {
                 name,
@@ -425,7 +439,12 @@ impl MathStatement {
             } => {
                 let tuple = format!("({}, {})", x_expr.to_symbolic(), y_expr.to_symbolic());
                 if let Some(n) = name {
-                    format!("{}({}) = {}", ident_to_symbolic(n), ident_to_symbolic(param), tuple)
+                    format!(
+                        "{}({}) = {}",
+                        ident_to_symbolic(n),
+                        ident_to_symbolic(param),
+                        tuple
+                    )
                 } else {
                     tuple
                 }
@@ -729,11 +748,7 @@ fn expr_to_latex(expr: &MathExpr, parent_prec: u8) -> String {
             if *prime_order == 0 && is_standard_latex_func(name) {
                 format!("\\{}\\left({}\\right)", name, args_str.join(", "))
             } else if *prime_order == 0 && matches!(name.as_str(), "asin" | "acos" | "atan") {
-                format!(
-                    "\\arc{}\\left({}\\right)",
-                    &name[1..],
-                    args_str.join(", ")
-                )
+                format!("\\arc{}\\left({}\\right)", &name[1..], args_str.join(", "))
             } else {
                 format!(
                     "{}{}\\left({}\\right)",

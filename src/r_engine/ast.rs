@@ -198,10 +198,19 @@ impl RExpr {
                     RBinOp::ShortAnd => " && ",
                     RBinOp::ShortOr => " || ",
                 };
-                format!("{}{}{}", lhs.to_source_string(), sym, rhs.to_source_string())
+                format!(
+                    "{}{}{}",
+                    lhs.to_source_string(),
+                    sym,
+                    rhs.to_source_string()
+                )
             }
             RExpr::Assign { target, value } => {
-                format!("{} <- {}", target.to_source_string(), value.to_source_string())
+                format!(
+                    "{} <- {}",
+                    target.to_source_string(),
+                    value.to_source_string()
+                )
             }
             RExpr::Formula { lhs, rhs } => {
                 if let Some(l) = lhs {
@@ -231,7 +240,11 @@ impl RExpr {
                 format!("{}[{}]", target.to_source_string(), idxs.join(", "))
             }
             RExpr::DoubleIndex { target, index } => {
-                format!("{}[[{}]]", target.to_source_string(), index.to_source_string())
+                format!(
+                    "{}[[{}]]",
+                    target.to_source_string(),
+                    index.to_source_string()
+                )
             }
             RExpr::FunctionDef { params, .. } => {
                 let ps: Vec<String> = params

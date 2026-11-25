@@ -1,5 +1,5 @@
 use super::ast::RError;
-use super::object::{RObject, format_r_num};
+use super::object::{format_r_num, RObject};
 use crate::collections::IndexMap;
 use nalgebra::{DMatrix, DVector};
 
@@ -18,7 +18,11 @@ fn parse_formula_terms(
     let lhs = lhs_opt
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| RError::new("`lm()` formula requires a response variable on the LHS (e.g. `y ~ x1 + x2`)"))?;
+        .ok_or_else(|| {
+            RError::new(
+                "`lm()` formula requires a response variable on the LHS (e.g. `y ~ x1 + x2`)",
+            )
+        })?;
 
     let mut has_intercept = true;
     let mut terms: Vec<String> = Vec::new();
@@ -121,7 +125,10 @@ fn lookup_column(
     if let Some(obj) = env.get(name) {
         return Ok(obj.as_numeric_options());
     }
-    Err(RError::new(format!("`lm()`: variable `{}` not found", name)))
+    Err(RError::new(format!(
+        "`lm()`: variable `{}` not found",
+        name
+    )))
 }
 
 fn evaluate_term_column(
@@ -184,9 +191,7 @@ pub fn fit_lm(
         Some(RObject::List(map)) => Some(map),
         Some(RObject::Null) | None => None,
         Some(_) => {
-            return Err(RError::new(
-                "`lm()`: `data` must be a data.frame or list",
-            ));
+            return Err(RError::new("`lm()`: `data` must be a data.frame or list"));
         }
     };
 
@@ -353,7 +358,10 @@ pub fn fit_lm(
         "intercept".to_string(),
         RObject::bool_scalar(spec.has_intercept),
     );
-    model.insert("response".to_string(), RObject::char_scalar(spec.lhs.clone()));
+    model.insert(
+        "response".to_string(),
+        RObject::char_scalar(spec.lhs.clone()),
+    );
     model.insert(
         "call".to_string(),
         RObject::char_scalar(format!("lm({} ~ {})", spec.lhs, rhs_str)),
@@ -408,10 +416,7 @@ pub fn predict_lm(
     }
 
     let Some(new_obj) = newdata else {
-        return Ok(map
-            .get("fitted.values")
-            .cloned()
-            .unwrap_or(RObject::Null));
+        return Ok(map.get("fitted.values").cloned().unwrap_or(RObject::Null));
     };
 
     let coefs = map
@@ -547,10 +552,7 @@ pub fn format_lm_summary(model: &RObject) -> Result<String, RError> {
     ];
 
     for (i, coef_opt) in coefs.iter().enumerate() {
-        let name = coef_names
-            .get(i)
-            .map(|s| s.as_str())
-            .unwrap_or("?");
+        let name = coef_names.get(i).map(|s| s.as_str()).unwrap_or("?");
         let est = coef_opt
             .map(format_r_num)
             .unwrap_or_else(|| "NA".to_string());

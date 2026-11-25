@@ -1,4 +1,4 @@
-use super::ast::{MathError, Span, unicode_char_to_greek_name};
+use super::ast::{unicode_char_to_greek_name, MathError, Span};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
@@ -70,9 +70,7 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
         }
 
         // Numbers: digits or leading `.` followed by digit
-        if ch.is_ascii_digit()
-            || (ch == '.' && i + 1 < len && bytes[i + 1].is_ascii_digit())
-        {
+        if ch.is_ascii_digit() || (ch == '.' && i + 1 < len && bytes[i + 1].is_ascii_digit()) {
             let start = i;
             let mut has_dot = false;
             while i < len {
@@ -104,7 +102,10 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
 
             let raw = &input[start..i];
             let val = raw.parse::<f64>().map_err(|_| {
-                MathError::new(format!("Invalid number literal `{}`", raw), Span::new(start, i))
+                MathError::new(
+                    format!("Invalid number literal `{}`", raw),
+                    Span::new(start, i),
+                )
             })?;
             tokens.push(Token::new(TokenKind::Number(val), start, i));
             continue;
@@ -174,8 +175,8 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
                 "frac" | "dfrac" | "tfrac" => {
                     tokens.push(Token::new(TokenKind::Command("frac".to_string()), start, i));
                 }
-                "sqrt" | "sum" | "prod" | "int" | "bar" | "overline" | "hat" | "tilde"
-                | "vec" | "text" | "operatorname" | "square" => {
+                "sqrt" | "sum" | "prod" | "int" | "bar" | "overline" | "hat" | "tilde" | "vec"
+                | "text" | "operatorname" | "square" => {
                     let norm = if cmd == "overline" { "bar" } else { cmd };
                     tokens.push(Token::new(TokenKind::Command(norm.to_string()), start, i));
                 }
@@ -192,7 +193,11 @@ pub fn tokenize(input: &str) -> Result<Vec<Token>, MathError> {
                     tokens.push(Token::new(TokenKind::Ident("atan".to_string()), start, i));
                 }
                 "varepsilon" => {
-                    tokens.push(Token::new(TokenKind::Ident("epsilon".to_string()), start, i));
+                    tokens.push(Token::new(
+                        TokenKind::Ident("epsilon".to_string()),
+                        start,
+                        i,
+                    ));
                 }
                 "varphi" => {
                     tokens.push(Token::new(TokenKind::Ident("phi".to_string()), start, i));
@@ -496,7 +501,10 @@ pub fn tokenize_lenient(input: &str) -> Result<Vec<Token>, MathError> {
             let trimmed = input.trim_end();
             if let Some(prefix) = trimmed.strip_suffix('\\') {
                 let mut toks = tokenize(prefix)?;
-                let eof_span = toks.last().map(|t| t.span).unwrap_or(Span::new(prefix.len(), input.len()));
+                let eof_span = toks
+                    .last()
+                    .map(|t| t.span)
+                    .unwrap_or(Span::new(prefix.len(), input.len()));
                 if matches!(toks.last().map(|t| &t.kind), Some(TokenKind::Eof)) {
                     toks.pop();
                 }

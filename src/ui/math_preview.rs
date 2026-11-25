@@ -1,11 +1,13 @@
 use crate::math::ast::{
-    AccentKind, BinOp, MathError, MathExpr, MathStatement, SpannedExpr, UnaryOp,
-    greek_name_to_unicode,
+    greek_name_to_unicode, AccentKind, BinOp, MathError, MathExpr, MathStatement, SpannedExpr,
+    UnaryOp,
 };
 use crate::math::parser::{
     parse_expr_with_known_fns, parse_statement_for_preview, parse_statement_with_known_fns,
 };
-use eframe::egui::{self, Color32, FontFamily, FontId, Painter, Pos2, Rounding, Sense, Stroke, Ui, Vec2};
+use eframe::egui::{
+    self, Color32, FontFamily, FontId, Painter, Pos2, Rounding, Sense, Stroke, Ui, Vec2,
+};
 use std::collections::HashSet;
 
 // =============================================================================
@@ -163,7 +165,12 @@ impl MathBox {
         }
     }
 
-    pub fn script(base: MathBox, sup: Option<MathBox>, sub: Option<MathBox>, base_size: f32) -> Self {
+    pub fn script(
+        base: MathBox,
+        sup: Option<MathBox>,
+        sub: Option<MathBox>,
+        base_size: f32,
+    ) -> Self {
         let gap_x = (base_size * 0.06_f32).max(0.8_f32);
         let sup_shift = sup
             .as_ref()
@@ -177,7 +184,12 @@ impl MathBox {
         let sup_w = sup.as_ref().map(|s| s.width).unwrap_or(0.0_f32);
         let sub_w = sub.as_ref().map(|s| s.width).unwrap_or(0.0_f32);
         let script_w = sup_w.max(sub_w);
-        let width = base.width + if script_w > 0.0_f32 { gap_x + script_w } else { 0.0_f32 };
+        let width = base.width
+            + if script_w > 0.0_f32 {
+                gap_x + script_w
+            } else {
+                0.0_f32
+            };
 
         let ascent = sup
             .as_ref()
@@ -239,7 +251,9 @@ impl MathBox {
     pub fn delimited(left: DelimKind, right: DelimKind, inner: MathBox, base_size: f32) -> Self {
         let delim_w = match left {
             DelimKind::Pipe => (base_size * 0.28_f32).max(4.0_f32),
-            DelimKind::Paren => (base_size * 0.34_f32 + inner.height() * 0.05_f32).clamp(5.0_f32, 11.0_f32),
+            DelimKind::Paren => {
+                (base_size * 0.34_f32 + inner.height() * 0.05_f32).clamp(5.0_f32, 11.0_f32)
+            }
             DelimKind::Bracket => (base_size * 0.34_f32).max(5.0_f32),
             DelimKind::Brace => (base_size * 0.44_f32).max(6.5_f32),
         };
@@ -261,7 +275,9 @@ impl MathBox {
         let gap = (base_size * 0.10_f32).max(1.6_f32);
         let accent_h = match kind {
             AccentKind::Bar => 1.6_f32,
-            AccentKind::Hat | AccentKind::Tilde | AccentKind::Vec => (base_size * 0.24_f32).max(3.2_f32),
+            AccentKind::Hat | AccentKind::Tilde | AccentKind::Vec => {
+                (base_size * 0.24_f32).max(3.2_f32)
+            }
         };
         Self {
             width: inner.width.max(base_size * 0.45_f32),
@@ -302,16 +318,9 @@ impl MathBox {
             let base_ascent = sym_center_shift + sym_half;
             let base_descent = (sym_half - sym_center_shift).max(0.0_f32);
 
-            let ascent = base_ascent
-                + upper
-                    .as_ref()
-                    .map(|u| gap + u.height())
-                    .unwrap_or(0.0_f32);
-            let descent = base_descent
-                + lower
-                    .as_ref()
-                    .map(|l| gap + l.height())
-                    .unwrap_or(0.0_f32);
+            let ascent = base_ascent + upper.as_ref().map(|u| gap + u.height()).unwrap_or(0.0_f32);
+            let descent =
+                base_descent + lower.as_ref().map(|l| gap + l.height()).unwrap_or(0.0_f32);
 
             Self {
                 width: max_w + 3.0_f32,
@@ -335,8 +344,7 @@ impl MathBox {
             let sym_half = sym_box.height() * 0.5_f32;
             let axis = base_size * 0.26_f32;
             let ascent = (axis + sym_half).max(
-                axis + sym_half * 0.65_f32
-                    + upper.as_ref().map(|u| u.ascent).unwrap_or(0.0_f32),
+                axis + sym_half * 0.65_f32 + upper.as_ref().map(|u| u.ascent).unwrap_or(0.0_f32),
             );
             let descent = (sym_half - axis).max(
                 (sym_half * 0.65_f32 - axis).max(0.0_f32)
@@ -696,7 +704,15 @@ fn layout_expr_colored(
     size: f32,
     color: Option<Color32>,
 ) -> MathBox {
-    if let (MathExpr::Call { name, prime_order, args }, Some(c)) = (&node.expr, color) {
+    if let (
+        MathExpr::Call {
+            name,
+            prime_order,
+            args,
+        },
+        Some(c),
+    ) = (&node.expr, color)
+    {
         let mut items = vec![layout_ident(m, name, size, Some(c))];
         if *prime_order > 0 {
             items.push(MathBox::colored_text(
@@ -866,9 +882,9 @@ pub fn layout_expr(m: &dyn TextMeasurer, node: &SpannedExpr, size: f32) -> MathB
             MathBox::fraction(num_box, den_box, size)
         }
         MathExpr::Sqrt { index, radicand } => {
-            let idx_box = index.as_ref().map(|i| {
-                layout_expr(m, unwrap_group_for_slot(i), (size * 0.62_f32).max(8.0_f32))
-            });
+            let idx_box = index
+                .as_ref()
+                .map(|i| layout_expr(m, unwrap_group_for_slot(i), (size * 0.62_f32).max(8.0_f32)));
             let rad_box = layout_expr(m, unwrap_group_for_slot(radicand), size);
             MathBox::radical(idx_box, rad_box, size)
         }
@@ -1107,7 +1123,12 @@ pub fn layout_expr(m: &dyn TextMeasurer, node: &SpannedExpr, size: f32) -> MathB
                 }
                 inner.push(layout_expr(m, item, size));
             }
-            MathBox::delimited(DelimKind::Paren, DelimKind::Paren, MathBox::row(inner), size)
+            MathBox::delimited(
+                DelimKind::Paren,
+                DelimKind::Paren,
+                MathBox::row(inner),
+                size,
+            )
         }
         MathExpr::MemberAccess { object, field } => MathBox::row(vec![
             MathBox::text(m, object, size, false),
@@ -1236,15 +1257,28 @@ pub fn paint_math_box(
             let color = color_override.unwrap_or(default_color);
             let font = FontId::new(size.max(6.0_f32), FontFamily::Proportional);
             let top_y = baseline_y - mbox.ascent;
-            painter.text(Pos2::new(origin_x, top_y), egui::Align2::LEFT_TOP, text, font, color);
+            painter.text(
+                Pos2::new(origin_x, top_y),
+                egui::Align2::LEFT_TOP,
+                text,
+                font,
+                color,
+            );
         }
         MathBoxKind::PlaceholderSlot { .. } => {
             let slot_rect = egui::Rect::from_min_max(
                 Pos2::new(origin_x + 0.8_f32, baseline_y - mbox.ascent + 1.0_f32),
-                Pos2::new(origin_x + mbox.width - 0.8_f32, baseline_y + mbox.descent - 0.5_f32),
+                Pos2::new(
+                    origin_x + mbox.width - 0.8_f32,
+                    baseline_y + mbox.descent - 0.5_f32,
+                ),
             );
             let accent = Color32::from_rgb(186, 146, 74);
-            painter.rect_filled(slot_rect, Rounding::same(3.0_f32), accent.gamma_multiply(0.14_f32));
+            painter.rect_filled(
+                slot_rect,
+                Rounding::same(3.0_f32),
+                accent.gamma_multiply(0.14_f32),
+            );
             // Subtle dashed border segments around the active visual placeholder slot
             let dash_stroke = Stroke::new(1.15_f32, accent.gamma_multiply(0.75_f32));
             let dash_len = 3.0_f32;
@@ -1297,7 +1331,14 @@ pub fn paint_math_box(
         MathBoxKind::Row(children) => {
             let mut cursor_x = origin_x;
             for child in children {
-                paint_math_box(painter, child, cursor_x, baseline_y, default_color, error_color);
+                paint_math_box(
+                    painter,
+                    child,
+                    cursor_x,
+                    baseline_y,
+                    default_color,
+                    error_color,
+                );
                 cursor_x += child.width;
             }
         }
@@ -1310,16 +1351,33 @@ pub fn paint_math_box(
         } => {
             let bar_y = baseline_y - *axis_height;
             painter.line_segment(
-                [Pos2::new(origin_x + 1.0_f32, bar_y), Pos2::new(origin_x + mbox.width - 1.0_f32, bar_y)],
+                [
+                    Pos2::new(origin_x + 1.0_f32, bar_y),
+                    Pos2::new(origin_x + mbox.width - 1.0_f32, bar_y),
+                ],
                 Stroke::new(*bar_thickness, default_color),
             );
             let num_x = origin_x + 0.5_f32 * (mbox.width - num.width);
             let num_baseline = bar_y - *bar_thickness * 0.5_f32 - *gap - num.descent;
-            paint_math_box(painter, num, num_x, num_baseline, default_color, error_color);
+            paint_math_box(
+                painter,
+                num,
+                num_x,
+                num_baseline,
+                default_color,
+                error_color,
+            );
 
             let den_x = origin_x + 0.5_f32 * (mbox.width - den.width);
             let den_baseline = bar_y + *bar_thickness * 0.5_f32 + *gap + den.ascent;
-            paint_math_box(painter, den, den_x, den_baseline, default_color, error_color);
+            paint_math_box(
+                painter,
+                den,
+                den_x,
+                den_baseline,
+                default_color,
+                error_color,
+            );
         }
         MathBoxKind::Script {
             base,
@@ -1329,7 +1387,14 @@ pub fn paint_math_box(
             sub_shift,
             gap_x,
         } => {
-            paint_math_box(painter, base, origin_x, baseline_y, default_color, error_color);
+            paint_math_box(
+                painter,
+                base,
+                origin_x,
+                baseline_y,
+                default_color,
+                error_color,
+            );
             let script_x = origin_x + base.width + *gap_x;
             if let Some(s) = sup {
                 paint_math_box(
@@ -1370,7 +1435,14 @@ pub fn paint_math_box(
             if let Some(idx_box) = index {
                 let idx_x = (hook_x0 + *hook_w * 0.42_f32 - idx_box.width).max(origin_x);
                 let idx_base = mid_y - 2.0_f32 - idx_box.descent;
-                paint_math_box(painter, idx_box, idx_x, idx_base, default_color, error_color);
+                paint_math_box(
+                    painter,
+                    idx_box,
+                    idx_x,
+                    idx_base,
+                    default_color,
+                    error_color,
+                );
             }
 
             // Drawn radical glyph + horizontal overbar
@@ -1386,7 +1458,14 @@ pub fn paint_math_box(
                 Stroke::new((*bar_thickness).max(1.25_f32), default_color),
             ));
 
-            paint_math_box(painter, radicand, rad_x, baseline_y, default_color, error_color);
+            paint_math_box(
+                painter,
+                radicand,
+                rad_x,
+                baseline_y,
+                default_color,
+                error_color,
+            );
         }
         MathBoxKind::Delimited {
             left,
@@ -1396,7 +1475,16 @@ pub fn paint_math_box(
         } => {
             let top_y = baseline_y - mbox.ascent;
             let bot_y = baseline_y + mbox.descent;
-            paint_delimiter(painter, *left, true, origin_x, top_y, bot_y, *delim_w, default_color);
+            paint_delimiter(
+                painter,
+                *left,
+                true,
+                origin_x,
+                top_y,
+                bot_y,
+                *delim_w,
+                default_color,
+            );
             paint_math_box(
                 painter,
                 inner,
@@ -1423,7 +1511,14 @@ pub fn paint_math_box(
             accent_h,
         } => {
             let inner_x = origin_x + 0.5_f32 * (mbox.width - inner.width);
-            paint_math_box(painter, inner, inner_x, baseline_y, default_color, error_color);
+            paint_math_box(
+                painter,
+                inner,
+                inner_x,
+                baseline_y,
+                default_color,
+                error_color,
+            );
             let y_bot = baseline_y - inner.ascent - *gap;
             let y_top = y_bot - *accent_h;
             let x0 = origin_x + 0.8_f32;
@@ -1436,7 +1531,11 @@ pub fn paint_math_box(
                 }
                 AccentKind::Hat => {
                     painter.add(egui::Shape::line(
-                        vec![Pos2::new(x0, y_bot), Pos2::new(xm, y_top), Pos2::new(x1, y_bot)],
+                        vec![
+                            Pos2::new(x0, y_bot),
+                            Pos2::new(xm, y_top),
+                            Pos2::new(x1, y_bot),
+                        ],
                         stroke,
                     ));
                 }
@@ -1474,8 +1573,16 @@ pub fn paint_math_box(
             if *stacked {
                 let sym_x = origin_x + 0.5_f32 * (mbox.width - symbol_box.width);
                 let sym_center_y = baseline_y - symbol_box.height() * 0.12_f32;
-                let sym_baseline = sym_center_y + (symbol_box.ascent - symbol_box.descent) * 0.5_f32;
-                paint_math_box(painter, symbol_box, sym_x, sym_baseline, default_color, error_color);
+                let sym_baseline =
+                    sym_center_y + (symbol_box.ascent - symbol_box.descent) * 0.5_f32;
+                paint_math_box(
+                    painter,
+                    symbol_box,
+                    sym_x,
+                    sym_baseline,
+                    default_color,
+                    error_color,
+                );
 
                 if let Some(u) = upper {
                     let ux = origin_x + 0.5_f32 * (mbox.width - u.width);
@@ -1567,8 +1674,16 @@ fn paint_delimiter(
             painter.line_segment([Pos2::new(cx, top_y), Pos2::new(cx, bot_y)], stroke);
         }
         DelimKind::Bracket => {
-            let outer = if is_left { x + 1.5_f32 } else { x + w - 1.5_f32 };
-            let inner = if is_left { x + w - 1.0_f32 } else { x + 1.0_f32 };
+            let outer = if is_left {
+                x + 1.5_f32
+            } else {
+                x + w - 1.5_f32
+            };
+            let inner = if is_left {
+                x + w - 1.0_f32
+            } else {
+                x + 1.0_f32
+            };
             painter.add(egui::Shape::line(
                 vec![
                     Pos2::new(inner, top_y),
@@ -1582,8 +1697,16 @@ fn paint_delimiter(
         DelimKind::Paren => {
             let steps = 10usize;
             let mut pts = Vec::with_capacity(steps + 1);
-            let outer = if is_left { x + 1.2_f32 } else { x + w - 1.2_f32 };
-            let inner = if is_left { x + w - 1.0_f32 } else { x + 1.0_f32 };
+            let outer = if is_left {
+                x + 1.2_f32
+            } else {
+                x + w - 1.2_f32
+            };
+            let inner = if is_left {
+                x + w - 1.0_f32
+            } else {
+                x + 1.0_f32
+            };
             for i in 0..=steps {
                 let t = (i as f32) / (steps as f32);
                 let u = 2.0_f32 * t - 1.0_f32; // -1..1
@@ -1594,9 +1717,17 @@ fn paint_delimiter(
             painter.add(egui::Shape::line(pts, stroke));
         }
         DelimKind::Brace => {
-            let tip = if is_left { x + 1.0_f32 } else { x + w - 1.0_f32 };
+            let tip = if is_left {
+                x + 1.0_f32
+            } else {
+                x + w - 1.0_f32
+            };
             let mid_x = x + 0.5_f32 * w;
-            let edge = if is_left { x + w - 1.0_f32 } else { x + 1.0_f32 };
+            let edge = if is_left {
+                x + w - 1.0_f32
+            } else {
+                x + 1.0_f32
+            };
             let h = (bot_y - top_y).max(4.0_f32);
             let q = (h * 0.14_f32).min(6.0_f32);
             let pts = vec![
@@ -1626,7 +1757,10 @@ pub fn render_math_ident_inline(
         painter: ui.painter(),
     };
     let mbox = layout_ident(&measurer, ident, base_size, Some(color));
-    let desired = Vec2::new(mbox.width.max(8.0_f32) + 2.0_f32, mbox.height().max(base_size + 2.0_f32));
+    let desired = Vec2::new(
+        mbox.width.max(8.0_f32) + 2.0_f32,
+        mbox.height().max(base_size + 2.0_f32),
+    );
     let (rect, resp) = ui.allocate_exact_size(desired, Sense::hover());
     let top_offset = (rect.height() - mbox.height()) * 0.5_f32;
     let baseline_y = rect.top() + top_offset + mbox.ascent;
@@ -1661,11 +1795,15 @@ pub fn render_math_preview_strip_interactive(
     let measurer = EguiTextMeasurer {
         painter: ui.painter(),
     };
-    let build = build_preview_layout(&measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color);
+    let build = build_preview_layout(
+        &measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color,
+    );
 
     let pad_x = 8.0_f32;
     let pad_y = 5.0_f32;
-    let desired_w = ui.available_width().max(build.layout.width + 2.0_f32 * pad_x + 6.0_f32);
+    let desired_w = ui
+        .available_width()
+        .max(build.layout.width + 2.0_f32 * pad_x + 6.0_f32);
     let desired_h = (build.layout.height() + 2.0_f32 * pad_y).max(base_size + 10.0_f32);
 
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(desired_w, desired_h), Sense::click());
@@ -1708,9 +1846,13 @@ pub fn render_math_preview_strip_interactive(
             let cx = origin_x + build.layout.width + 2.5_f32;
             let cy0 = (baseline_y - base_size * 0.78_f32).max(rect.top() + 3.0_f32);
             let cy1 = (baseline_y + base_size * 0.22_f32).min(rect.bottom() - 3.0_f32);
-            painter.line_segment([Pos2::new(cx, cy0), Pos2::new(cx, cy1)], Stroke::new(1.5_f32, accent_color));
+            painter.line_segment(
+                [Pos2::new(cx, cy0), Pos2::new(cx, cy1)],
+                Stroke::new(1.5_f32, accent_color),
+            );
         }
-        ui.ctx().request_repaint_after(std::time::Duration::from_millis(450));
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(450));
     }
 
     (build, resp)
@@ -1733,11 +1875,15 @@ pub fn render_math_preview_strip(
     let measurer = EguiTextMeasurer {
         painter: ui.painter(),
     };
-    let build = build_preview_layout(&measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color);
+    let build = build_preview_layout(
+        &measurer, sig_prefix, raw_expr, known_fns, base_size, sig_color,
+    );
 
     let pad_x = 8.0_f32;
     let pad_y = 4.0_f32;
-    let desired_w = ui.available_width().max(build.layout.width + 2.0_f32 * pad_x);
+    let desired_w = ui
+        .available_width()
+        .max(build.layout.width + 2.0_f32 * pad_x);
     let desired_h = (build.layout.height() + 2.0_f32 * pad_y).max(base_size + 8.0_f32);
 
     let (rect, _resp) = ui.allocate_exact_size(Vec2::new(desired_w, desired_h), Sense::hover());
@@ -1749,7 +1895,11 @@ pub fn render_math_preview_strip(
 
     let painter = ui.painter_at(rect.intersect(ui.clip_rect()));
     painter.rect_filled(rect, Rounding::same(6.0_f32), bg_color);
-    painter.rect_stroke(rect, Rounding::same(6.0_f32), Stroke::new(1.0_f32, stroke_color));
+    painter.rect_stroke(
+        rect,
+        Rounding::same(6.0_f32),
+        Stroke::new(1.0_f32, stroke_color),
+    );
 
     let content_h = build.layout.height();
     let top_offset = (rect.height() - content_h) * 0.5_f32;
@@ -1949,7 +2099,8 @@ mod tests {
         let int_box = build_preview_layout(&m, None, r"\int_0^1 x^2 dx", &known, 16.0, None);
         let bar_box = build_preview_layout(&m, None, r"\bar{Y}", &known, 16.0, None);
         let plain_y = build_preview_layout(&m, None, "Y", &known, 16.0, None);
-        let pw_box = build_preview_layout(&m, None, "{ x < 0: -x, x >= 0: x^2 }", &known, 16.0, None);
+        let pw_box =
+            build_preview_layout(&m, None, "{ x < 0: -x, x >= 0: x^2 }", &known, 16.0, None);
 
         assert!(sum_box.error.is_none());
         assert!(sum_box.layout.height() > 30.0);

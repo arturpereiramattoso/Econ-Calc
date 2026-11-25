@@ -29,23 +29,23 @@ pub enum RTokenKind {
     Minus,
     Star,
     Slash,
-    Caret,   // ^ or **
-    Mod,     // %%
-    IntDiv,  // %/%
-    MatMul,  // %*%
-    Colon,   // :
-    Dollar,  // $
-    EqEq,    // ==
-    Ne,      // !=
-    Lt,      // <
-    Le,      // <=
-    Gt,      // >
-    Ge,      // >=
-    And,     // &
-    AndAnd,  // &&
-    Or,      // |
-    OrOr,    // ||
-    Bang,    // !
+    Caret,  // ^ or **
+    Mod,    // %%
+    IntDiv, // %/%
+    MatMul, // %*%
+    Colon,  // :
+    Dollar, // $
+    EqEq,   // ==
+    Ne,     // !=
+    Lt,     // <
+    Le,     // <=
+    Gt,     // >
+    Ge,     // >=
+    And,    // &
+    AndAnd, // &&
+    Or,     // |
+    OrOr,   // ||
+    Bang,   // !
     LParen,
     RParen,
     LBracket,
