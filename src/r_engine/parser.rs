@@ -1,5 +1,5 @@
 use super::ast::{RBinOp, RCallArg, RError, RExpr, RParam, RUnaryOp};
-use super::lexer::{RToken, RTokenKind, tokenize_r};
+use super::lexer::{tokenize_r, RToken, RTokenKind};
 
 pub fn parse_r_program(input: &str) -> Result<Vec<RExpr>, RError> {
     let tokens = tokenize_r(input)?;
@@ -13,14 +13,37 @@ pub fn parse_r_program(input: &str) -> Result<Vec<RExpr>, RError> {
     Ok(stmts)
 }
 
+const MAX_PARSE_DEPTH: usize = 128;
+
 struct RParser {
     tokens: Vec<RToken>,
     pos: usize,
+    depth: usize,
 }
 
 impl RParser {
     fn new(tokens: Vec<RToken>) -> Self {
-        Self { tokens, pos: 0 }
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+        }
+    }
+
+    fn with_depth<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, RError>,
+    ) -> Result<T, RError> {
+        if self.depth >= MAX_PARSE_DEPTH {
+            return Err(RError::with_span(
+                "R expression exceeds maximum nesting depth",
+                self.peek().span,
+            ));
+        }
+        self.depth += 1;
+        let res = f(self);
+        self.depth -= 1;
+        res
     }
 
     fn peek(&self) -> &RToken {
@@ -53,7 +76,10 @@ impl RParser {
     }
 
     fn skip_separators(&mut self) {
-        while matches!(self.peek().kind, RTokenKind::Newline | RTokenKind::Semicolon) {
+        while matches!(
+            self.peek().kind,
+            RTokenKind::Newline | RTokenKind::Semicolon
+        ) {
             self.advance();
         }
     }
@@ -71,6 +97,10 @@ impl RParser {
     }
 
     fn parse_assignment(&mut self) -> Result<RExpr, RError> {
+        self.with_depth(Self::parse_assignment_inner)
+    }
+
+    fn parse_assignment_inner(&mut self) -> Result<RExpr, RError> {
         let lhs = self.parse_formula()?;
         match self.peek().kind {
             RTokenKind::AssignLeft | RTokenKind::Eq => {
@@ -159,6 +189,10 @@ impl RParser {
     }
 
     fn parse_not(&mut self) -> Result<RExpr, RError> {
+        self.with_depth(Self::parse_not_inner)
+    }
+
+    fn parse_not_inner(&mut self) -> Result<RExpr, RError> {
         if matches!(self.peek().kind, RTokenKind::Bang) {
             self.advance();
             let inner = self.parse_not()?;
@@ -282,6 +316,10 @@ impl RParser {
     }
 
     fn parse_unary(&mut self) -> Result<RExpr, RError> {
+        self.with_depth(Self::parse_unary_inner)
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<RExpr, RError> {
         match self.peek().kind {
             RTokenKind::Minus => {
                 self.advance();
@@ -455,6 +493,10 @@ impl RParser {
     }
 
     fn parse_primary(&mut self) -> Result<RExpr, RError> {
+        self.with_depth(Self::parse_primary_inner)
+    }
+
+    fn parse_primary_inner(&mut self) -> Result<RExpr, RError> {
         let tok = self.peek().clone();
         match tok.kind {
             RTokenKind::Number(n) => {

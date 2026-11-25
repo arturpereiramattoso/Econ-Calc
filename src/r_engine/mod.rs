@@ -143,12 +143,7 @@ impl MathExternalEnv for REngineMathBridge<'_> {
         member.as_numeric_options().into_iter().next().flatten()
     }
 
-    fn get_member_element(
-        &self,
-        object: &str,
-        field: &str,
-        index_1based: usize,
-    ) -> Option<f64> {
+    fn get_member_element(&self, object: &str, field: &str, index_1based: usize) -> Option<f64> {
         if index_1based == 0 {
             return None;
         }
@@ -294,7 +289,7 @@ fn split_top_level_pair(s: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::math::{CompiledExpr, CompiledWorkspace, EvalContext, EvalScratch, parse_expr};
+    use crate::math::{parse_expr, CompiledExpr, CompiledWorkspace, EvalContext, EvalScratch};
 
     #[test]
     fn test_recycling_and_na_propagation() {
@@ -415,7 +410,11 @@ mod tests {
         "#;
         engine.execute(script, None).unwrap();
 
-        let coefs = engine.execute("coef(fit)", None).unwrap().value.as_f64_vec();
+        let coefs = engine
+            .execute("coef(fit)", None)
+            .unwrap()
+            .value
+            .as_f64_vec();
         assert_eq!(coefs.len(), 3);
         assert!((coefs[0] - 2.0).abs() < 1e-9, "b0 = {}", coefs[0]);
         assert!((coefs[1] - 3.0).abs() < 1e-9, "b1 = {}", coefs[1]);
@@ -437,7 +436,9 @@ mod tests {
         assert!((preds[0] - 26.0).abs() < 1e-9);
 
         let sum_txt = engine.execute("summary(fit)", None).unwrap().value;
-        assert!(sum_txt.preview_string().contains("Multiple R-squared: 1.00000"));
+        assert!(sum_txt
+            .preview_string()
+            .contains("Multiple R-squared: 1.00000"));
     }
 
     #[test]
@@ -465,7 +466,11 @@ mod tests {
                     overrides.push((p.as_str(), v));
                 }
                 let mut scr = EvalScratch::new();
-                Some(f.body.eval(&ctx, &overrides, &mut scr).map_err(|e| e.message))
+                Some(
+                    f.body
+                        .eval(&ctx, &overrides, &mut scr)
+                        .map_err(|e| e.message),
+                )
             }
             fn get_desmos_param(&self, name: &str) -> Option<f64> {
                 self.params.get(name).copied()
@@ -500,8 +505,8 @@ mod tests {
         let math_bridge = REngineMathBridge {
             r_objects: r_engine.env(),
         };
-        let math_ctx = EvalContext::new(&desmos_params, &compiled_ws.functions)
-            .with_external(&math_bridge);
+        let math_ctx =
+            EvalContext::new(&desmos_params, &compiled_ws.functions).with_external(&math_bridge);
         let mut scratch = EvalScratch::new();
 
         let ast1 = parse_expr("df$y[3] + my_fn(2) + fit(5)").unwrap();
@@ -510,5 +515,19 @@ mod tests {
             .unwrap();
         // df$y[3] = 9, my_fn(2) = 21, fit(5) = 3 + 2*5 = 13 => 43
         assert!((val1 - 43.0).abs() < 1e-9, "got {}", val1);
+    }
+
+    #[test]
+    fn test_r_engine_security_bounds() {
+        let mut engine = EmbeddedREngine::new();
+        assert!(engine
+            .execute("matrix(1, nrow = 1e12, ncol = 1e12)", None)
+            .is_err());
+        assert!(engine
+            .execute("matrix(1, nrow = 1000, ncol = 1000, byrow = TRUE)", None)
+            .is_err());
+
+        let deep_r = format!("{}1{}", "(".repeat(400), ")".repeat(400));
+        assert!(engine.execute(&deep_r, None).is_err());
     }
 }

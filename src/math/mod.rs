@@ -8,15 +8,13 @@ pub mod solver;
 
 use crate::collections::IndexMap;
 pub use ast::{
-    BinOp, CmpOp, MathError, MathExpr, MathStatement, Span, SpannedExpr, UnaryOp, ident_to_latex,
+    ident_to_latex, BinOp, CmpOp, MathError, MathExpr, MathStatement, Span, SpannedExpr, UnaryOp,
 };
 pub use compiler::{
-    CompiledExpr, CompiledUserFn, EvalContext, EvalScratch, MathExternalEnv,
-    eval_fn_val_and_deriv, extract_fn_arg_name, find_surplus_equilibrium_x,
+    eval_fn_val_and_deriv, extract_fn_arg_name, find_surplus_equilibrium_x, CompiledExpr,
+    CompiledUserFn, EvalContext, EvalScratch, MathExternalEnv,
 };
-pub use graph::{
-    CycleError, ParsedFunction, parse_function_signature, topological_sort_functions,
-};
+pub use graph::{parse_function_signature, topological_sort_functions, CycleError, ParsedFunction};
 pub use parser::{
     expr_mentions_any, parse_expr, parse_expr_with_known_fns, parse_statement,
     parse_statement_with_known_fns,
@@ -26,7 +24,7 @@ pub use sampling::{
     sample_implicit_contours, sample_parametric_branches, sample_polar_branches,
 };
 pub use solver::{
-    PoiKind, detect_curve_pois, eval_compiled_at_x, float_to_fraction, solve_compiled_roots_1d,
+    detect_curve_pois, eval_compiled_at_x, float_to_fraction, solve_compiled_roots_1d, PoiKind,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -197,8 +195,10 @@ impl CompiledWorkspace {
                 let mentions_x = expr_mentions_any(&lhs, &["x", "L", "Q", "Y"])
                     || expr_mentions_any(&rhs, &["x", "L", "Q", "Y"]);
                 if !mentions_y && mentions_x {
-                    let rhs_is_zero = matches!(rhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
-                    let lhs_is_zero = matches!(lhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
+                    let rhs_is_zero =
+                        matches!(rhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
+                    let lhs_is_zero =
+                        matches!(lhs.expr, MathExpr::Number(n) if n.abs() < 1e-12_f64);
                     let is_fn_intersection = !rhs_is_zero
                         && !lhs_is_zero
                         && (matches!(lhs.expr, MathExpr::Call { .. })
@@ -376,7 +376,10 @@ pub fn to_latex_from_ast(raw: &str) -> String {
 
 /// Parses LaTeX or math syntax and emits clean canonical EconCalc symbolic notation
 /// (for two-way LaTeX <-> Symbolic synchronization).
-pub fn latex_to_symbolic_from_ast(raw: &str, known_fns: &HashSet<String>) -> Result<String, MathError> {
+pub fn latex_to_symbolic_from_ast(
+    raw: &str,
+    known_fns: &HashSet<String>,
+) -> Result<String, MathError> {
     let stmt = parse_statement_with_known_fns(raw.trim(), Some(known_fns))?;
     Ok(stmt.to_symbolic())
 }
@@ -485,14 +488,40 @@ mod tests {
     fn test_implicit_multiplication_and_latex() {
         assert!((eval_simple("2x", 3.0, 0.0, &[]) - 6.0).abs() < 1e-12);
         assert!((eval_simple("3(x + 1)", 3.0, 0.0, &[]) - 12.0).abs() < 1e-12);
-        assert!((eval_simple("(a + b)(c + d)", 0.0, 0.0, &[("a", 1.0), ("b", 2.0), ("c", 3.0), ("d", 4.0)]) - 21.0).abs() < 1e-12);
-        assert!((eval_simple(r"x \sin(y)", 2.0, std::f64::consts::FRAC_PI_2, &[]) - 2.0).abs() < 1e-12);
+        assert!(
+            (eval_simple(
+                "(a + b)(c + d)",
+                0.0,
+                0.0,
+                &[("a", 1.0), ("b", 2.0), ("c", 3.0), ("d", 4.0)]
+            ) - 21.0)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (eval_simple(r"x \sin(y)", 2.0, std::f64::consts::FRAC_PI_2, &[]) - 2.0).abs() < 1e-12
+        );
         assert!((eval_simple("x(x + 1)", 3.0, 0.0, &[]) - 12.0).abs() < 1e-12);
         assert!((eval_simple("2e3x", 3.0, 0.0, &[]) - 6000.0).abs() < 1e-12);
-        assert!((eval_simple(r"\frac{a + b}{2}", 0.0, 0.0, &[("a", 4.0), ("b", 6.0)]) - 5.0).abs() < 1e-12);
+        assert!(
+            (eval_simple(r"\frac{a + b}{2}", 0.0, 0.0, &[("a", 4.0), ("b", 6.0)]) - 5.0).abs()
+                < 1e-12
+        );
         assert!((eval_simple(r"\sqrt[3]{27} + \sqrt{16}", 0.0, 0.0, &[]) - 7.0).abs() < 1e-12);
-        assert!((eval_simple(r"\alpha \cdot x^{\beta}", 4.0, 0.0, &[("alpha", 2.0), ("beta", 0.5)]) - 4.0).abs() < 1e-12);
-        assert!((eval_simple(r"\bar{Y} / P_x", 0.0, 0.0, &[("Y_bar", 20.0), ("P_x", 4.0)]) - 5.0).abs() < 1e-12);
+        assert!(
+            (eval_simple(
+                r"\alpha \cdot x^{\beta}",
+                4.0,
+                0.0,
+                &[("alpha", 2.0), ("beta", 0.5)]
+            ) - 4.0)
+                .abs()
+                < 1e-12
+        );
+        assert!(
+            (eval_simple(r"\bar{Y} / P_x", 0.0, 0.0, &[("Y_bar", 20.0), ("P_x", 4.0)]) - 5.0).abs()
+                < 1e-12
+        );
     }
 
     #[test]
@@ -539,8 +568,16 @@ mod tests {
 
         let compiled_ws = CompiledWorkspace::build(&ws_fns);
         assert!(compiled_ws.cycle_error.is_none());
-        let g_pos = compiled_ws.topo_order.iter().position(|n| n == "g").unwrap();
-        let f_pos = compiled_ws.topo_order.iter().position(|n| n == "f").unwrap();
+        let g_pos = compiled_ws
+            .topo_order
+            .iter()
+            .position(|n| n == "g")
+            .unwrap();
+        let f_pos = compiled_ws
+            .topo_order
+            .iter()
+            .position(|n| n == "f")
+            .unwrap();
         assert!(g_pos < f_pos);
 
         let params = IndexMap::new();
@@ -574,8 +611,7 @@ mod tests {
         existing.insert("alpha".to_string());
         let r_objs = HashSet::new();
 
-        let unbound =
-            graph::discover_unbound_symbols(&ast, &bound, &known_fns, &existing, &r_objs);
+        let unbound = graph::discover_unbound_symbols(&ast, &bound, &known_fns, &existing, &r_objs);
         assert_eq!(unbound, vec!["a", "Y_bar", "n"]);
     }
 
@@ -588,8 +624,7 @@ mod tests {
         // Circle x^2 + y^2 - 25 = 0
         let diff_ast = parse_expr("x^2 + y^2 - 25").unwrap();
         let diff_compiled = CompiledExpr::compile(&diff_ast);
-        let contours =
-            sample_implicit_contours(&diff_compiled, &ctx, -6.0, 6.0, -6.0, 6.0, 48, 48);
+        let contours = sample_implicit_contours(&diff_compiled, &ctx, -6.0, 6.0, -6.0, 6.0, 48, 48);
         assert!(!contours.is_empty());
         // Verify every extracted point lies close to radius 5
         for chain in &contours {
@@ -652,7 +687,11 @@ mod tests {
         let step_ast = parse_expr("{ x < 0: -4, 4 }").unwrap();
         let step_compiled = CompiledExpr::compile(&step_ast);
         let branches = sample_1d_branches(&step_compiled, &ctx, -5.0, 5.0, -6.0, 6.0, 200, 4.0);
-        assert!(branches.len() >= 2, "expected step split, got {} branches", branches.len());
+        assert!(
+            branches.len() >= 2,
+            "expected step split, got {} branches",
+            branches.len()
+        );
 
         let ineq_ast = parse_expr("x^2").unwrap();
         let region = sample_explicit_y_inequality(
@@ -793,7 +832,9 @@ mod tests {
         let PlottableEntry::TangentLine { line_compiled, .. } = tang else {
             panic!("Expected TangentLine");
         };
-        let y_at_4 = line_compiled.eval(&ctx, &[("x", 4.0)], &mut scratch).unwrap();
+        let y_at_4 = line_compiled
+            .eval(&ctx, &[("x", 4.0)], &mut scratch)
+            .unwrap();
         assert!((y_at_4 - 15.0).abs() < 1e-4);
 
         // elasticity(q, 5) & \varepsilon(q, 5) for 2*x^0.45 -> 0.45
@@ -844,18 +885,54 @@ mod tests {
         let parabola = CompiledExpr::compile(&parse_expr("x^2 - 4").unwrap());
         let line5 = CompiledExpr::compile(&parse_expr("5").unwrap());
         let pois = detect_curve_pois("f", &parabola, &[("g", &line5)], &ctx, -5.0, 5.0, -6.0, 8.0);
-        assert!(pois.iter().any(|p| p.kind == PoiKind::Root && (p.x - 2.0).abs() < 1e-4));
-        assert!(pois.iter().any(|p| p.kind == PoiKind::Root && (p.x + 2.0).abs() < 1e-4));
-        assert!(pois.iter().any(|p| p.kind == PoiKind::LocalMin && p.x.abs() < 1e-3 && (p.y + 4.0).abs() < 1e-3));
-        assert!(pois.iter().any(|p| p.kind == PoiKind::Intersection && (p.x - 3.0).abs() < 1e-3));
+        assert!(pois
+            .iter()
+            .any(|p| p.kind == PoiKind::Root && (p.x - 2.0).abs() < 1e-4));
+        assert!(pois
+            .iter()
+            .any(|p| p.kind == PoiKind::Root && (p.x + 2.0).abs() < 1e-4));
+        assert!(pois
+            .iter()
+            .any(|p| p.kind == PoiKind::LocalMin && p.x.abs() < 1e-3 && (p.y + 4.0).abs() < 1e-3));
+        assert!(pois
+            .iter()
+            .any(|p| p.kind == PoiKind::Intersection && (p.x - 3.0).abs() < 1e-3));
 
         // Two-way LaTeX -> Symbolic round-trip
-        let sym = latex_to_symbolic_from_ast(
-            r"\frac{-b + \sqrt{b^2 - 4ac}}{2a}",
-            &HashSet::new(),
-        )
-        .unwrap();
+        let sym = latex_to_symbolic_from_ast(r"\frac{-b + \sqrt{b^2 - 4ac}}{2a}", &HashSet::new())
+            .unwrap();
         assert!(sym.contains("sqrt("));
         assert!(sym.contains('/'));
+    }
+
+    #[test]
+    fn test_security_depth_and_dos_guards() {
+        let deep_parens = format!("{}1{}", "(".repeat(400), ")".repeat(400));
+        assert!(parse_expr(&deep_parens).is_err());
+
+        let deep_unary = format!("{}1", "-".repeat(400));
+        assert!(parse_expr(&deep_unary).is_err());
+
+        let mut fns_raw = IndexMap::new();
+        fns_raw.insert("f(x)".to_string(), "tangent(f, x)".to_string());
+        let cw = CompiledWorkspace::build(&fns_raw);
+        let params = IndexMap::new();
+        let ctx = EvalContext::new(&params, &cw.functions);
+        let mut scratch = EvalScratch::new();
+        let self_tan = parse_expr_with_known_fns("f(2)", &cw.known_fn_names).unwrap();
+        assert!(CompiledExpr::compile(&self_tan)
+            .eval(&ctx, &[], &mut scratch)
+            .is_err());
+
+        let high_deriv = parse_expr_with_known_fns("f'''''(2)", &cw.known_fn_names).unwrap();
+        assert!(CompiledExpr::compile(&high_deriv)
+            .eval(&ctx, &[], &mut scratch)
+            .is_err());
+
+        let huge_sum = parse_expr(r"\sum_{i=-1e19}^{1e19} 1").unwrap();
+        let sum_val = CompiledExpr::compile(&huge_sum)
+            .eval(&ctx, &[], &mut scratch)
+            .unwrap();
+        assert!((sum_val - 100_000.0).abs() < 1e-6);
     }
 }

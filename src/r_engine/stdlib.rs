@@ -1,7 +1,9 @@
 use super::ast::RError;
 use super::lm::{fit_lm, format_lm_summary, predict_lm};
-use super::object::{RObject, format_r_num};
+use super::object::{format_r_num, RObject};
 use crate::collections::IndexMap;
+
+const MAX_MATRIX_CELLS: usize = 250_000;
 
 /// Evaluated function call argument `(optional_name, value)`.
 #[derive(Debug, Clone)]
@@ -103,12 +105,12 @@ pub fn call_builtin(
                 .first()
                 .ok_or_else(|| RError::new(format!("`{}(x)` requires 1 argument", name)))?;
             Some(match &x.value {
-                RObject::DataFrame { columns, .. } => RObject::Character(
-                    columns.keys().map(|k| Some(k.clone())).collect(),
-                ),
-                RObject::List(map) => RObject::Character(
-                    map.keys().map(|k| Some(k.clone())).collect(),
-                ),
+                RObject::DataFrame { columns, .. } => {
+                    RObject::Character(columns.keys().map(|k| Some(k.clone())).collect())
+                }
+                RObject::List(map) => {
+                    RObject::Character(map.keys().map(|k| Some(k.clone())).collect())
+                }
                 RObject::Matrix {
                     colnames: Some(c), ..
                 } => RObject::Character(c.iter().map(|s| Some(s.clone())).collect()),
@@ -125,9 +127,9 @@ pub fn call_builtin(
                     rownames: Some(r), ..
                 } => RObject::Character(r.iter().map(|s| Some(s.clone())).collect()),
                 RObject::Matrix { rownames: None, .. } => RObject::Null,
-                RObject::DataFrame { row_count, .. } => RObject::Character(
-                    (1..=*row_count).map(|i| Some(i.to_string())).collect(),
-                ),
+                RObject::DataFrame { row_count, .. } => {
+                    RObject::Character((1..=*row_count).map(|i| Some(i.to_string())).collect())
+                }
                 _ => RObject::Null,
             })
         }
@@ -147,9 +149,11 @@ pub fn call_builtin(
                 .first()
                 .ok_or_else(|| RError::new("`is.na(x)` requires 1 argument"))?;
             Some(match &x.value {
-                RObject::Numeric(v) => {
-                    RObject::Logical(v.iter().map(|o| Some(o.is_none() || o.map(|f| f.is_nan()).unwrap_or(false))).collect())
-                }
+                RObject::Numeric(v) => RObject::Logical(
+                    v.iter()
+                        .map(|o| Some(o.is_none() || o.map(|f| f.is_nan()).unwrap_or(false)))
+                        .collect(),
+                ),
                 RObject::Logical(v) => {
                     RObject::Logical(v.iter().map(|o| Some(o.is_none())).collect())
                 }
@@ -279,8 +283,9 @@ pub fn call_builtin(
 
         // ---- Econometrics & Linear Models ----
         "lm" => {
-            let formula = find_arg(args, "formula", 0)
-                .ok_or_else(|| RError::new("`lm()` requires a formula (e.g. `lm(y ~ x1 + x2, data = df)`)"))?;
+            let formula = find_arg(args, "formula", 0).ok_or_else(|| {
+                RError::new("`lm()` requires a formula (e.g. `lm(y ~ x1 + x2, data = df)`)")
+            })?;
             let data = find_arg(args, "data", 1);
             match formula {
                 RObject::Formula { lhs, rhs } => Some(fit_lm(lhs.as_deref(), rhs, data, env)?),
@@ -388,7 +393,9 @@ fn builtin_seq(args: &[EvalArg]) -> Result<RObject, RError> {
             .as_scalar_f64()
             .ok_or_else(|| RError::new("`seq(n)` requires a finite numeric scalar"))?;
         let end = n.floor().clamp(0.0_f64, 100_000.0_f64) as usize;
-        return Ok(RObject::Numeric((1..=end).map(|i| Some(i as f64)).collect()));
+        return Ok(RObject::Numeric(
+            (1..=end).map(|i| Some(i as f64)).collect(),
+        ));
     }
 
     let from = find_arg(args, "from", 0)
@@ -480,6 +487,41 @@ fn builtin_rep(args: &[EvalArg]) -> Result<RObject, RError> {
     })
 }
 
+fn validate_matrix_dim(arg: Option<&RObject>, label: &str) -> Result<Option<usize>, RError> {
+    let Some(obj) = arg else {
+        return Ok(None);
+    };
+    let Some(v) = obj.as_scalar_f64() else {
+        return Err(RError::new(format!(
+            "`matrix()`: `{}` must be a finite positive scalar",
+            label
+        )));
+    };
+    if !v.is_finite() || v < 1.0_f64 || v > (MAX_MATRIX_CELLS as f64) {
+        return Err(RError::new(format!(
+            "`matrix()`: `{}` must be between 1 and {}",
+            label, MAX_MATRIX_CELLS
+        )));
+    }
+    Ok(Some(v as usize))
+}
+
+fn checked_matrix_len(nrow: usize, ncol: usize, context: &str) -> Result<usize, RError> {
+    let total = nrow.checked_mul(ncol).ok_or_else(|| {
+        RError::new(format!(
+            "`{}`: dimensions overflow maximum matrix size",
+            context
+        ))
+    })?;
+    if total > MAX_MATRIX_CELLS {
+        return Err(RError::new(format!(
+            "`{}`: requested {}x{} ({} cells) exceeds limit of {}",
+            context, nrow, ncol, total, MAX_MATRIX_CELLS
+        )));
+    }
+    Ok(total)
+}
+
 fn builtin_matrix(args: &[EvalArg]) -> Result<RObject, RError> {
     let data = find_arg(args, "data", 0)
         .map(|o| o.as_numeric_options())
@@ -488,12 +530,8 @@ fn builtin_matrix(args: &[EvalArg]) -> Result<RObject, RError> {
         .and_then(|o| o.is_truthy().ok())
         .unwrap_or(false);
 
-    let nrow_opt = find_arg(args, "nrow", 1)
-        .and_then(|o| o.as_scalar_f64())
-        .map(|v| v.max(1.0_f64) as usize);
-    let ncol_opt = find_arg(args, "ncol", 2)
-        .and_then(|o| o.as_scalar_f64())
-        .map(|v| v.max(1.0_f64) as usize);
+    let nrow_opt = validate_matrix_dim(find_arg(args, "nrow", 1), "nrow")?;
+    let ncol_opt = validate_matrix_dim(find_arg(args, "ncol", 2), "ncol")?;
 
     let (nrow, ncol) = match (nrow_opt, ncol_opt) {
         (Some(r), Some(c)) => (r, c),
@@ -502,7 +540,7 @@ fn builtin_matrix(args: &[EvalArg]) -> Result<RObject, RError> {
         (None, None) => (data.len().max(1), 1),
     };
 
-    let total = (nrow * ncol).min(250_000);
+    let total = checked_matrix_len(nrow, ncol, "matrix()")?;
     let mut out = vec![None; total];
     if !data.is_empty() {
         if byrow {
@@ -546,10 +584,7 @@ fn builtin_data_frame(args: &[EvalArg]) -> Result<RObject, RError> {
 
     let mut columns = IndexMap::new();
     for (idx, a) in args.iter().enumerate() {
-        let col_name = a
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("V{}", idx + 1));
+        let col_name = a.name.clone().unwrap_or_else(|| format!("V{}", idx + 1));
         let col_len = a.value.r_len();
         if col_len != max_rows && col_len != 1 && max_rows > 0 {
             return Err(RError::new(format!(
@@ -580,10 +615,7 @@ fn builtin_data_frame(args: &[EvalArg]) -> Result<RObject, RError> {
 fn builtin_list(args: &[EvalArg]) -> RObject {
     let mut map = IndexMap::new();
     for (idx, a) in args.iter().enumerate() {
-        let key = a
-            .name
-            .clone()
-            .unwrap_or_else(|| format!("[[{}]]", idx + 1));
+        let key = a.name.clone().unwrap_or_else(|| format!("[[{}]]", idx + 1));
         map.insert(key, a.value.clone());
     }
     RObject::List(map)
@@ -630,6 +662,9 @@ fn builtin_cbind(args: &[EvalArg]) -> Result<RObject, RError> {
                 ncol: c,
                 ..
             } => {
+                if r.checked_mul(*c) != Some(data.len()) {
+                    return Err(RError::new("`cbind()`: malformed matrix dimensions"));
+                }
                 nrow = nrow.max(*r);
                 for j in 0..*c {
                     cols.push(data[j * r..(j + 1) * r].to_vec());
@@ -643,7 +678,8 @@ fn builtin_cbind(args: &[EvalArg]) -> Result<RObject, RError> {
         }
     }
     let ncol = cols.len();
-    let mut data = Vec::with_capacity(nrow * ncol);
+    let total = checked_matrix_len(nrow, ncol, "cbind()")?;
+    let mut data = Vec::with_capacity(total);
     for col in cols {
         for r in 0..nrow {
             data.push(if col.is_empty() {
@@ -710,6 +746,9 @@ fn builtin_rbind(args: &[EvalArg]) -> Result<RObject, RError> {
                 ncol: c,
                 ..
             } => {
+                if r.checked_mul(*c) != Some(data.len()) {
+                    return Err(RError::new("`rbind()`: malformed matrix dimensions"));
+                }
                 ncol = ncol.max(*c);
                 for ri in 0..*r {
                     let row: Vec<Option<f64>> = (0..*c).map(|ci| data[ci * r + ri]).collect();
@@ -724,7 +763,8 @@ fn builtin_rbind(args: &[EvalArg]) -> Result<RObject, RError> {
         }
     }
     let nrow = rows.len();
-    let mut data = vec![None; nrow * ncol];
+    let total = checked_matrix_len(nrow, ncol, "rbind()")?;
+    let mut data = vec![None; total];
     for (r, row) in rows.iter().enumerate() {
         for c in 0..ncol {
             data[c * nrow + r] = if row.is_empty() {
@@ -905,8 +945,16 @@ fn builtin_ifelse(args: &[EvalArg]) -> Result<RObject, RError> {
         let mut out = Vec::with_capacity(conds.len());
         for (i, c) in conds.iter().enumerate() {
             match c {
-                Some(true) => out.push(if yv.is_empty() { None } else { yv[i % yv.len()].clone() }),
-                Some(false) => out.push(if nv.is_empty() { None } else { nv[i % nv.len()].clone() }),
+                Some(true) => out.push(if yv.is_empty() {
+                    None
+                } else {
+                    yv[i % yv.len()].clone()
+                }),
+                Some(false) => out.push(if nv.is_empty() {
+                    None
+                } else {
+                    nv[i % nv.len()].clone()
+                }),
                 None => out.push(None),
             }
         }
@@ -918,8 +966,16 @@ fn builtin_ifelse(args: &[EvalArg]) -> Result<RObject, RError> {
     let mut out = Vec::with_capacity(conds.len());
     for (i, c) in conds.iter().enumerate() {
         match c {
-            Some(true) => out.push(if yv.is_empty() { None } else { yv[i % yv.len()] }),
-            Some(false) => out.push(if nv.is_empty() { None } else { nv[i % nv.len()] }),
+            Some(true) => out.push(if yv.is_empty() {
+                None
+            } else {
+                yv[i % yv.len()]
+            }),
+            Some(false) => out.push(if nv.is_empty() {
+                None
+            } else {
+                nv[i % nv.len()]
+            }),
             None => out.push(None),
         }
     }
@@ -967,7 +1023,9 @@ fn builtin_mean(args: &[EvalArg]) -> Result<RObject, RError> {
     if saw_na || vals.is_empty() {
         return Ok(RObject::Numeric(vec![None]));
     }
-    Ok(RObject::scalar(vals.iter().sum::<f64>() / (vals.len() as f64)))
+    Ok(RObject::scalar(
+        vals.iter().sum::<f64>() / (vals.len() as f64),
+    ))
 }
 
 fn builtin_median(args: &[EvalArg]) -> Result<RObject, RError> {
@@ -1036,9 +1094,15 @@ fn builtin_quantile(args: &[EvalArg]) -> Result<RObject, RError> {
 
     let opts = x.as_numeric_options();
     if !na_rm && opts.iter().any(|o| o.is_none()) {
-        return Err(RError::new("missing values not allowed in `quantile()` unless `na.rm = TRUE`"));
+        return Err(RError::new(
+            "missing values not allowed in `quantile()` unless `na.rm = TRUE`",
+        ));
     }
-    let mut vals: Vec<f64> = opts.into_iter().flatten().filter(|v| v.is_finite()).collect();
+    let mut vals: Vec<f64> = opts
+        .into_iter()
+        .flatten()
+        .filter(|v| v.is_finite())
+        .collect();
     if vals.is_empty() {
         return Ok(RObject::Numeric(vec![None; probs.len()]));
     }
@@ -1100,8 +1164,7 @@ fn builtin_diff(args: &[EvalArg]) -> Result<RObject, RError> {
 }
 
 fn builtin_sort(args: &[EvalArg]) -> Result<RObject, RError> {
-    let x = find_arg(args, "x", 0)
-        .ok_or_else(|| RError::new("`sort(x)` requires 1 argument"))?;
+    let x = find_arg(args, "x", 0).ok_or_else(|| RError::new("`sort(x)` requires 1 argument"))?;
     let decreasing = find_named(args, "decreasing")
         .and_then(|o| o.is_truthy().ok())
         .unwrap_or(false);

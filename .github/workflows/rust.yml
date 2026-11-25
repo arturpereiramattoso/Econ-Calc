@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -15,15 +18,15 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
     - name: Install Rust toolchain with rustfmt and clippy
-      uses: dtolnay/rust-toolchain@stable
+      uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       with:
         components: rustfmt, clippy
 
     - name: Cache Cargo registry and build artifacts
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
     - name: Check formatting (CONTRIBUTING.md)
       run: cargo fmt --check
@@ -36,3 +39,14 @@ jobs:
 
     - name: Run tests
       run: cargo test --verbose
+
+  security-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

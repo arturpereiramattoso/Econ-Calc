@@ -4,7 +4,7 @@ version = "1.0.0"
 edition = "2021"
 authors = ["Principal Systems Economist"]
 description = "Oikonomos (Οἰκονόμος) — Native computational economics, mathematics, and data workbench (rooted in Econ-Calc)"
-license = "MIT"
+license = "Apache-2.0"
 
 [dependencies]
 eframe = { version = "0.28.1", default-features = true }

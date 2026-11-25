@@ -121,6 +121,28 @@ pub struct ProjectFileEntry {
     pub size_bytes: u64,
 }
 
+/// Sanitizes a dataset name for safe single-file export inside `exports/`.
+pub fn sanitize_dataset_filename(raw: &str) -> String {
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = sanitized.trim_matches(['_', '-']);
+    let truncated: String = trimmed.chars().take(64).collect();
+    let final_name = truncated.trim_end_matches(['_', '-']);
+    if final_name.is_empty() {
+        "dataset".to_string()
+    } else {
+        final_name.to_string()
+    }
+}
+
 /// Lists files in a project directory safely without blocking on deep trees.
 pub fn list_project_directory(dir: &Path) -> Vec<ProjectFileEntry> {
     let mut entries = Vec::new();
@@ -157,8 +179,7 @@ pub fn save_text_file(path: &Path, content: &str) -> Result<(), String> {
                 .map_err(|e| format!("Failed to create directory {:?}: {}", parent, e))?;
         }
     }
-    let mut file =
-        File::create(path).map_err(|e| format!("Failed to create {:?}: {}", path, e))?;
+    let mut file = File::create(path).map_err(|e| format!("Failed to create {:?}: {}", path, e))?;
     file.write_all(content.as_bytes())
         .map_err(|e| format!("Failed to write {:?}: {}", path, e))
 }
@@ -410,45 +431,77 @@ source("model_analysis.R")
     save_text_file(path, &report_body)
 }
 
-fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
-    if let Ok(child) = Command::new("positron").arg(export_dir).spawn() {
-        return (
-            "positron".to_string(),
-            format!(
-                "Launched Positron IDE (PID {}) with workspace {:?}",
-                child.id(),
-                export_dir
-            ),
-        );
+fn find_executable_in_path(candidates: &[&str]) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        if dir.as_os_str().is_empty() || dir == Path::new(".") || !dir.is_absolute() {
+            continue;
+        }
+        for candidate in candidates {
+            let full = dir.join(candidate);
+            if full.is_file() {
+                return Some(full);
+            }
+        }
     }
-    if cfg!(target_os = "windows") {
-        if let Ok(child) = Command::new("cmd")
-            .args(["/C", "positron"])
-            .arg(export_dir)
-            .spawn()
-        {
+    None
+}
+
+fn launch_workspace_viewer(export_dir: &Path) -> (String, String) {
+    let positron_candidates: &[&str] = if cfg!(target_os = "windows") {
+        &["positron.exe", "positron.cmd"]
+    } else {
+        &["positron"]
+    };
+    if let Some(exe) = find_executable_in_path(positron_candidates) {
+        if let Ok(child) = Command::new(&exe).arg(export_dir).spawn() {
             return (
-                "positron.cmd".to_string(),
+                exe.file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("positron")
+                    .to_string(),
                 format!(
-                    "Launched Positron CLI shim (PID {}) on {:?}",
+                    "Launched Positron IDE (PID {}) with workspace {:?}",
                     child.id(),
                     export_dir
                 ),
             );
         }
     }
-    if let Ok(child) = Command::new("explorer").arg(export_dir).spawn() {
-        return (
-            "explorer.exe".to_string(),
-            format!(
-                "positron not found on PATH; opened folder in Explorer (PID {}) at {:?}",
-                child.id(),
-                export_dir
-            ),
-        );
+    if cfg!(target_os = "windows") {
+        let explorer_cmd = std::env::var_os("WINDIR")
+            .map(|w| PathBuf::from(w).join("explorer.exe"))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| PathBuf::from("explorer.exe"));
+        if let Ok(child) = Command::new(explorer_cmd).arg(export_dir).spawn() {
+            return (
+                "explorer.exe".to_string(),
+                format!(
+                    "positron not found on PATH; opened folder in Explorer (PID {}) at {:?}",
+                    child.id(),
+                    export_dir
+                ),
+            );
+        }
     }
     (
         "filesystem-only".to_string(),
         format!("Exported bundle to {:?}", export_dir),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_dataset_filename;
+
+    #[test]
+    fn test_sanitize_dataset_filename() {
+        assert_eq!(sanitize_dataset_filename("my_data-1"), "my_data-1");
+        assert_eq!(sanitize_dataset_filename("../../evil"), "evil");
+        assert_eq!(sanitize_dataset_filename(r"a/b\c:d"), "a_b_c_d");
+        assert_eq!(sanitize_dataset_filename(""), "dataset");
+        assert_eq!(sanitize_dataset_filename("..."), "dataset");
+        let long_name = "a".repeat(100);
+        assert_eq!(sanitize_dataset_filename(&long_name).len(), 64);
+    }
 }

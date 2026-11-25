@@ -1,6 +1,6 @@
 use super::ast::{RBinOp, RCallArg, RError, RExpr, RParam, RUnaryOp};
 use super::object::RObject;
-use super::stdlib::{EvalArg, call_builtin};
+use super::stdlib::{call_builtin, EvalArg};
 use crate::collections::IndexMap;
 use nalgebra::DMatrix;
 
@@ -268,7 +268,10 @@ impl<'a> REvaluator<'a> {
                 self.assign_var(name.clone(), value);
                 Ok(())
             }
-            RExpr::Member { target: inner, field } => {
+            RExpr::Member {
+                target: inner,
+                field,
+            } => {
                 let RExpr::Ident(var_name) = inner.as_ref() else {
                     return Err(RError::new("Member assignment requires a variable name"));
                 };
@@ -299,7 +302,9 @@ impl<'a> REvaluator<'a> {
                         columns.insert(field.clone(), col_val);
                     }
                     _ => {
-                        return Err(RError::new("`$<-` is only supported on lists and data.frames"));
+                        return Err(RError::new(
+                            "`$<-` is only supported on lists and data.frames",
+                        ));
                     }
                 }
                 self.assign_var(var_name.clone(), obj);
@@ -337,11 +342,8 @@ impl<'a> REvaluator<'a> {
                 return self.eval_subset_special(raw_args);
             }
             if fn_name == "ls" {
-                let names: Vec<Option<String>> = self
-                    .global_env
-                    .keys()
-                    .map(|k| Some(k.clone()))
-                    .collect();
+                let names: Vec<Option<String>> =
+                    self.global_env.keys().map(|k| Some(k.clone())).collect();
                 return Ok(RObject::Character(names));
             }
             if fn_name == "rm" {
@@ -406,7 +408,9 @@ impl<'a> REvaluator<'a> {
             .ok_or_else(|| RError::new("`subset()` requires a condition"))?;
         let df_obj = self.eval_value(df_expr)?;
         let RObject::DataFrame { columns, row_count } = &df_obj else {
-            return Err(RError::new("`subset()` first argument must be a data.frame"));
+            return Err(RError::new(
+                "`subset()` first argument must be a data.frame",
+            ));
         };
 
         // Push data.frame columns into a temporary lexical frame
@@ -517,10 +521,8 @@ fn eval_desmos_bridge_call(
     args: &[EvalArg],
     bridge: &dyn DesmosBridge,
 ) -> Result<RObject, RError> {
-    let vec_args: Vec<Vec<Option<f64>>> = args
-        .iter()
-        .map(|a| a.value.as_numeric_options())
-        .collect();
+    let vec_args: Vec<Vec<Option<f64>>> =
+        args.iter().map(|a| a.value.as_numeric_options()).collect();
     if vec_args.iter().any(|v| v.is_empty()) {
         return Ok(RObject::Numeric(Vec::new()));
     }
@@ -558,7 +560,10 @@ fn iter_elements(obj: &RObject) -> Vec<RObject> {
     match obj {
         RObject::Numeric(v) => v.iter().map(|&x| RObject::Numeric(vec![x])).collect(),
         RObject::Logical(v) => v.iter().map(|&x| RObject::Logical(vec![x])).collect(),
-        RObject::Character(v) => v.iter().map(|x| RObject::Character(vec![x.clone()])).collect(),
+        RObject::Character(v) => v
+            .iter()
+            .map(|x| RObject::Character(vec![x.clone()]))
+            .collect(),
         RObject::List(m) => m.values().cloned().collect(),
         RObject::DataFrame { columns, .. } => columns.values().cloned().collect(),
         _ => Vec::new(),
@@ -743,10 +748,16 @@ fn eval_binary(op: RBinOp, lhs: &RObject, rhs: &RObject) -> Result<RObject, RErr
 }
 
 fn eval_matmul(lhs: &RObject, rhs: &RObject) -> Result<RObject, RError> {
+    const MAX_MATMUL_CELLS: usize = 250_000;
     let (lr, lc, ldata) = match lhs {
         RObject::Matrix {
             data, nrow, ncol, ..
-        } => (*nrow, *ncol, data.clone()),
+        } => {
+            if nrow.checked_mul(*ncol) != Some(data.len()) {
+                return Err(RError::new("`%*%`: malformed LHS matrix dimensions"));
+            }
+            (*nrow, *ncol, data.clone())
+        }
         other => {
             let v = other.as_numeric_options();
             (1, v.len(), v)
@@ -755,7 +766,12 @@ fn eval_matmul(lhs: &RObject, rhs: &RObject) -> Result<RObject, RError> {
     let (rr, rc, rdata) = match rhs {
         RObject::Matrix {
             data, nrow, ncol, ..
-        } => (*nrow, *ncol, data.clone()),
+        } => {
+            if nrow.checked_mul(*ncol) != Some(data.len()) {
+                return Err(RError::new("`%*%`: malformed RHS matrix dimensions"));
+            }
+            (*nrow, *ncol, data.clone())
+        }
         other => {
             let v = other.as_numeric_options();
             (v.len(), 1, v)
@@ -765,6 +781,15 @@ fn eval_matmul(lhs: &RObject, rhs: &RObject) -> Result<RObject, RError> {
         return Err(RError::new(format!(
             "`%*%`: non-conformable arguments ([{}x{}] %*% [{}x{}])",
             lr, lc, rr, rc
+        )));
+    }
+    let out_cells = lr
+        .checked_mul(rc)
+        .ok_or_else(|| RError::new("`%*%`: output matrix dimensions overflow"))?;
+    if out_cells > MAX_MATMUL_CELLS {
+        return Err(RError::new(format!(
+            "`%*%`: output matrix {}x{} ({} cells) exceeds limit of {}",
+            lr, rc, out_cells, MAX_MATMUL_CELLS
         )));
     }
     let lf: Vec<f64> = ldata.iter().map(|o| o.unwrap_or(f64::NAN)).collect();
@@ -858,7 +883,9 @@ fn resolve_indices(idx_obj: &RObject, len: usize) -> Result<Vec<Option<usize>>, 
             let has_pos = raw.iter().any(|o| matches!(o, Some(v) if *v > 0.0_f64));
             let has_neg = raw.iter().any(|o| matches!(o, Some(v) if *v < 0.0_f64));
             if has_pos && has_neg {
-                return Err(RError::new("only 0's may be mixed with negative subscripts"));
+                return Err(RError::new(
+                    "only 0's may be mixed with negative subscripts",
+                ));
             }
             if has_neg {
                 let excluded: Vec<usize> = raw
@@ -907,21 +934,15 @@ fn slice_vector<T: Clone>(src: &[Option<T>], indices: &[Option<usize>]) -> Vec<O
 
 fn slice_rows_by_indices(col: &RObject, rows: &[usize]) -> RObject {
     match col {
-        RObject::Numeric(v) => RObject::Numeric(
-            rows.iter()
-                .map(|&r| v.get(r).copied().flatten())
-                .collect(),
-        ),
-        RObject::Logical(v) => RObject::Logical(
-            rows.iter()
-                .map(|&r| v.get(r).copied().flatten())
-                .collect(),
-        ),
-        RObject::Character(v) => RObject::Character(
-            rows.iter()
-                .map(|&r| v.get(r).cloned().flatten())
-                .collect(),
-        ),
+        RObject::Numeric(v) => {
+            RObject::Numeric(rows.iter().map(|&r| v.get(r).copied().flatten()).collect())
+        }
+        RObject::Logical(v) => {
+            RObject::Logical(rows.iter().map(|&r| v.get(r).copied().flatten()).collect())
+        }
+        RObject::Character(v) => {
+            RObject::Character(rows.iter().map(|&r| v.get(r).cloned().flatten()).collect())
+        }
         other => other.clone(),
     }
 }
@@ -1145,6 +1166,8 @@ fn assign_index(
             }
             Ok(())
         }
-        _ => Err(RError::new("Indexed assignment not supported for this type")),
+        _ => Err(RError::new(
+            "Indexed assignment not supported for this type",
+        )),
     }
 }

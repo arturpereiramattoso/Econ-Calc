@@ -2,7 +2,7 @@ use super::ast::{
     AccentKind, BinOp, CmpOp, MathError, MathExpr, MathStatement, PiecewiseBranch, Span,
     SpannedExpr, UnaryOp,
 };
-use super::lexer::{Token, TokenKind, tokenize, tokenize_lenient};
+use super::lexer::{tokenize, tokenize_lenient, Token, TokenKind};
 use std::collections::HashSet;
 
 /// Built-in math function names recognized by the parser and evaluator.
@@ -133,6 +133,8 @@ pub fn parse_statement_for_preview(
     Ok(stmt)
 }
 
+const MAX_PARSE_DEPTH: usize = 128;
+
 struct Parser<'a> {
     tokens: Vec<Token>,
     pos: usize,
@@ -140,6 +142,7 @@ struct Parser<'a> {
     in_abs_depth: usize,
     in_integral_depth: usize,
     lenient: bool,
+    depth: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -151,7 +154,24 @@ impl<'a> Parser<'a> {
             in_abs_depth: 0,
             in_integral_depth: 0,
             lenient,
+            depth: 0,
         }
+    }
+
+    fn with_depth<T>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> Result<T, MathError>,
+    ) -> Result<T, MathError> {
+        if self.depth >= MAX_PARSE_DEPTH {
+            return Err(MathError::new(
+                "Expression exceeds maximum nesting depth",
+                self.peek().span,
+            ));
+        }
+        self.depth += 1;
+        let res = f(self);
+        self.depth -= 1;
+        res
     }
 
     fn is_structural_end(&self) -> bool {
@@ -256,7 +276,10 @@ impl<'a> Parser<'a> {
                         args.iter().map(|a| a.as_canonical_ident()).collect();
                     if let Some(params) = param_names {
                         if !params.is_empty() {
-                            if name == "r" && params.len() == 1 && (params[0] == "theta" || params[0] == "t") {
+                            if name == "r"
+                                && params.len() == 1
+                                && (params[0] == "theta" || params[0] == "t")
+                            {
                                 return Ok(MathStatement::Polar {
                                     param: params[0].clone(),
                                     r_expr: rhs,
@@ -328,7 +351,9 @@ impl<'a> Parser<'a> {
                         };
                         rest.push((next_op, next_rhs));
                     }
-                    let span = lhs.span.merge(rest.last().map(|(_, e)| e.span).unwrap_or(lhs.span));
+                    let span = lhs
+                        .span
+                        .merge(rest.last().map(|(_, e)| e.span).unwrap_or(lhs.span));
                     let expr = SpannedExpr::new(
                         MathExpr::ComparisonChain {
                             first: Box::new(lhs),
@@ -351,7 +376,9 @@ impl<'a> Parser<'a> {
                     let next_rhs = self.parse_additive()?;
                     rest.push((next_op, next_rhs));
                 }
-                let span = lhs.span.merge(rest.last().map(|(_, e)| e.span).unwrap_or(lhs.span));
+                let span = lhs
+                    .span
+                    .merge(rest.last().map(|(_, e)| e.span).unwrap_or(lhs.span));
                 Ok(MathStatement::Expr(SpannedExpr::new(
                     MathExpr::ComparisonChain {
                         first: Box::new(lhs),
@@ -543,9 +570,7 @@ impl<'a> Parser<'a> {
             return false;
         }
         match &self.peek().kind {
-            TokenKind::Number(_)
-            | TokenKind::Ident(_)
-            | TokenKind::LParen => true,
+            TokenKind::Number(_) | TokenKind::Ident(_) | TokenKind::LParen => true,
             TokenKind::LBrace => !self.brace_is_restriction(),
             TokenKind::Pipe => self.in_abs_depth == 0,
             TokenKind::Command(cmd) => matches!(
@@ -633,8 +658,7 @@ impl<'a> Parser<'a> {
                                     | TokenKind::Minus
                                     | TokenKind::Star
                                     | TokenKind::Slash
-                            ))
-                    {
+                            )) {
                         SpannedExpr::new(MathExpr::Placeholder, slash_tok.span)
                     } else {
                         self.parse_unary()?
@@ -680,6 +704,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unary(&mut self) -> Result<SpannedExpr, MathError> {
+        self.with_depth(Self::parse_unary_inner)
+    }
+
+    fn parse_unary_inner(&mut self) -> Result<SpannedExpr, MathError> {
         match self.peek().kind {
             TokenKind::Minus => {
                 let tok = self.advance();
@@ -718,8 +746,7 @@ impl<'a> Parser<'a> {
                     || matches!(
                         self.peek().kind,
                         TokenKind::Plus | TokenKind::Star | TokenKind::Slash
-                    ))
-            {
+                    )) {
                 SpannedExpr::new(MathExpr::Placeholder, caret_tok.span)
             } else {
                 self.parse_unary()?
@@ -754,8 +781,7 @@ impl<'a> Parser<'a> {
                                     | TokenKind::Star
                                     | TokenKind::Slash
                                     | TokenKind::Caret
-                            ))
-                    {
+                            )) {
                         SpannedExpr::new(MathExpr::Placeholder, us_tok.span)
                     } else {
                         self.parse_script_atom()?
@@ -864,12 +890,14 @@ impl<'a> Parser<'a> {
                             let span = expr.span.merge(close_span);
                             // Normalize `sqrt()` / `nthroot(n, x)` into `MathExpr::Sqrt`
                             if fn_name == "sqrt" && args.len() <= 1 {
-                                let radicand = args
-                                    .into_iter()
-                                    .next()
-                                    .unwrap_or_else(|| SpannedExpr::new(MathExpr::Placeholder, span));
+                                let radicand = args.into_iter().next().unwrap_or_else(|| {
+                                    SpannedExpr::new(MathExpr::Placeholder, span)
+                                });
                                 if matches!(radicand.expr, MathExpr::Placeholder) && !self.lenient {
-                                    return Err(MathError::new("sqrt() requires an argument", span));
+                                    return Err(MathError::new(
+                                        "sqrt() requires an argument",
+                                        span,
+                                    ));
                                 }
                                 expr = SpannedExpr::new(
                                     MathExpr::Sqrt {
@@ -1073,7 +1101,10 @@ impl<'a> Parser<'a> {
             }
         }
 
-        let close = self.expect(TokenKind::RBrace, "Expected `}` to close piecewise expression")?;
+        let close = self.expect(
+            TokenKind::RBrace,
+            "Expected `}` to close piecewise expression",
+        )?;
         if branches.is_empty() {
             return Err(MathError::new(
                 "Piecewise expression cannot be empty",
@@ -1087,6 +1118,10 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_primary(&mut self) -> Result<SpannedExpr, MathError> {
+        self.with_depth(Self::parse_primary_inner)
+    }
+
+    fn parse_primary_inner(&mut self) -> Result<SpannedExpr, MathError> {
         let tok = self.peek().clone();
         match tok.kind {
             TokenKind::Number(n) => {
@@ -1276,10 +1311,7 @@ impl<'a> Parser<'a> {
                         open.span
                     };
                     return Ok(SpannedExpr::new(
-                        MathExpr::Abs(Box::new(SpannedExpr::new(
-                            MathExpr::Placeholder,
-                            open.span,
-                        ))),
+                        MathExpr::Abs(Box::new(SpannedExpr::new(MathExpr::Placeholder, open.span))),
                         open.span.merge(close_span),
                     ));
                 }
@@ -1309,10 +1341,7 @@ impl<'a> Parser<'a> {
                     self.parse_braced_group()
                 }
             }
-            TokenKind::Eof => Err(MathError::new(
-                "Unexpected end of expression",
-                tok.span,
-            )),
+            TokenKind::Eof => Err(MathError::new("Unexpected end of expression", tok.span)),
             _ => Err(MathError::new(
                 format!("Unexpected token `{:?}` while parsing expression", tok.kind),
                 tok.span,
@@ -1528,16 +1557,15 @@ impl<'a> Parser<'a> {
         let first = self.parse_additive()?;
         let result = if matches!(self.peek().kind, TokenKind::Eq) {
             self.advance();
-            let var = first.as_canonical_ident().ok_or_else(|| {
-                MathError::new("Expected index variable before `=`", first.span)
-            })?;
-            let start_expr = if self.lenient
-                && matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof)
-            {
-                self.placeholder_here()
-            } else {
-                self.parse_additive()?
-            };
+            let var = first
+                .as_canonical_ident()
+                .ok_or_else(|| MathError::new("Expected index variable before `=`", first.span))?;
+            let start_expr =
+                if self.lenient && matches!(self.peek().kind, TokenKind::RBrace | TokenKind::Eof) {
+                    self.placeholder_here()
+                } else {
+                    self.parse_additive()?
+                };
             (var, start_expr)
         } else {
             ("i".to_string(), first)

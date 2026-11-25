@@ -18,12 +18,7 @@ pub trait MathExternalEnv {
         None
     }
 
-    fn get_member_element(
-        &self,
-        _object: &str,
-        _field: &str,
-        _index_1based: usize,
-    ) -> Option<f64> {
+    fn get_member_element(&self, _object: &str, _field: &str, _index_1based: usize) -> Option<f64> {
         None
     }
 
@@ -336,11 +331,7 @@ impl CompiledExpr {
                     if *slot < scratch.slot_bound.len() && scratch.slot_bound[*slot] {
                         scratch.stack.push(scratch.slots[*slot]);
                     } else {
-                        let name = self
-                            .var_names
-                            .get(*slot)
-                            .map(|s| s.as_str())
-                            .unwrap_or("?");
+                        let name = self.var_names.get(*slot).map(|s| s.as_str()).unwrap_or("?");
                         return Err(MathError::new(
                             format!("Undefined variable `{}`", name),
                             Span::default(),
@@ -409,7 +400,10 @@ impl CompiledExpr {
                 Op::CmpChain { ops } => {
                     let count = ops.len() + 1;
                     if scratch.stack.len() < count {
-                        return Err(MathError::new("Stack underflow in comparison", Span::default()));
+                        return Err(MathError::new(
+                            "Stack underflow in comparison",
+                            Span::default(),
+                        ));
                     }
                     let start = scratch.stack.len() - count;
                     let mut ok = true;
@@ -455,19 +449,11 @@ impl CompiledExpr {
                     span,
                 } => {
                     let sub = &self.sub_exprs[*body_idx];
-                    let x0 = resolve_var_value(
-                        var,
-                        ctx,
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    )
-                    .unwrap_or(0.0_f64);
-                    let mut child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let x0 =
+                        resolve_var_value(var, ctx, &self.var_names, scratch, active_overrides)
+                            .unwrap_or(0.0_f64);
+                    let mut child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let val = eval_numerical_derivative_compiled(
                         sub,
                         var,
@@ -492,11 +478,8 @@ impl CompiledExpr {
                     body_idx,
                     span,
                 } => {
-                    let mut child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let mut child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let a = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*lower_idx],
@@ -540,11 +523,8 @@ impl CompiledExpr {
                     body_idx,
                     ..
                 } => {
-                    let mut child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let mut child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let lo_f = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*lower_idx],
@@ -579,11 +559,8 @@ impl CompiledExpr {
                     body_idx,
                     ..
                 } => {
-                    let mut child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let mut child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let lo_f = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*lower_idx],
@@ -612,11 +589,8 @@ impl CompiledExpr {
                     scratch.stack.push(val);
                 }
                 Op::Piecewise { branches } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let mut out = f64::NAN;
                     for (cond_opt, val_idx) in branches {
@@ -649,11 +623,8 @@ impl CompiledExpr {
                     inner_idx,
                     cond_indices,
                 } => {
-                    let mut child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let mut child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let val = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*inner_idx],
@@ -694,11 +665,8 @@ impl CompiledExpr {
                     x0_idx,
                     span,
                 } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let x0 = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*x0_idx],
@@ -707,16 +675,10 @@ impl CompiledExpr {
                         &mut sub_scratch,
                         depth + 1,
                     )?;
-                    let x_cur = resolve_var_value(
-                        "x",
-                        ctx,
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    )
-                    .unwrap_or(x0);
-                    let (y0, slope) =
-                        eval_fn_val_and_deriv(fn_name, x0, *span, ctx, depth + 1)?;
+                    let x_cur =
+                        resolve_var_value("x", ctx, &self.var_names, scratch, active_overrides)
+                            .unwrap_or(x0);
+                    let (y0, slope) = eval_fn_val_and_deriv(fn_name, x0, *span, ctx, depth + 1)?;
                     scratch.stack.push(y0 + slope * (x_cur - x0));
                 }
                 Op::Elasticity {
@@ -724,11 +686,8 @@ impl CompiledExpr {
                     x_idx,
                     span,
                 } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let xv = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*x_idx],
@@ -750,11 +709,8 @@ impl CompiledExpr {
                     x_idx,
                     span,
                 } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let xv = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*x_idx],
@@ -771,11 +727,8 @@ impl CompiledExpr {
                     x_idx,
                     span,
                 } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let xv = eval_sub_with_owned_overrides(
                         &self.sub_exprs[*x_idx],
@@ -799,11 +752,8 @@ impl CompiledExpr {
                     b_idx,
                     span,
                 } => {
-                    let child_overrides = build_inherited_overrides(
-                        &self.var_names,
-                        scratch,
-                        active_overrides,
-                    );
+                    let child_overrides =
+                        build_inherited_overrides(&self.var_names, scratch, active_overrides);
                     let mut sub_scratch = EvalScratch::new();
                     let (a, b) = if let (Some(ai), Some(bi)) = (a_idx, b_idx) {
                         let av = eval_sub_with_owned_overrides(
@@ -822,7 +772,8 @@ impl CompiledExpr {
                         )?;
                         (av, bv)
                     } else {
-                        let eq_x = find_surplus_equilibrium_x(f_name, g_name, ctx, *span, depth + 1)?;
+                        let eq_x =
+                            find_surplus_equilibrium_x(f_name, g_name, ctx, *span, depth + 1)?;
                         (0.0_f64, eq_x)
                     };
                     let val = eval_area_between_fns(f_name, g_name, a, b, *span, ctx, depth + 1)?;
@@ -856,7 +807,10 @@ impl CompiledExpr {
                     }
                     let ext = ctx.external.ok_or_else(|| {
                         MathError::new(
-                            format!("Cannot index `{}[{}]` without R workspace", target_name, idx),
+                            format!(
+                                "Cannot index `{}[{}]` without R workspace",
+                                target_name, idx
+                            ),
                             *span,
                         )
                     })?;
@@ -878,7 +832,10 @@ impl CompiledExpr {
                     }
                     let ext = ctx.external.ok_or_else(|| {
                         MathError::new(
-                            format!("Cannot index `{}${}[{}]` without R workspace", object, field, idx),
+                            format!(
+                                "Cannot index `{}${}[{}]` without R workspace",
+                                object, field, idx
+                            ),
                             *span,
                         )
                     })?;
@@ -890,9 +847,10 @@ impl CompiledExpr {
             }
         }
 
-        scratch.stack.pop().ok_or_else(|| {
-            MathError::new("Expression produced no value", Span::default())
-        })
+        scratch
+            .stack
+            .pop()
+            .ok_or_else(|| MathError::new("Expression produced no value", Span::default()))
     }
 }
 
@@ -993,6 +951,18 @@ fn eval_numerical_derivative_compiled(
     overrides: &mut Vec<(String, f64)>,
     depth: usize,
 ) -> Result<f64, MathError> {
+    if depth > ctx.max_recursion_depth {
+        return Err(MathError::new(
+            "Maximum function recursion depth exceeded",
+            Span::default(),
+        ));
+    }
+    if order > 4 {
+        return Err(MathError::new(
+            "Numerical derivatives above 4th order are not supported",
+            Span::default(),
+        ));
+    }
     let base_h = ctx.diff_h.clamp(1e-9_f64, 1e-2_f64);
     let mut sub_scratch = EvalScratch::new();
 
@@ -1026,7 +996,7 @@ fn eval_numerical_derivative_compiled(
             order - 1,
             ctx,
             overrides,
-            depth,
+            depth + 1,
         )?;
         let dm = eval_numerical_derivative_compiled(
             sub,
@@ -1035,7 +1005,7 @@ fn eval_numerical_derivative_compiled(
             order - 1,
             ctx,
             overrides,
-            depth,
+            depth + 1,
         )?;
         Ok((dp - dm) / (2.0_f64 * h))
     }
@@ -1114,14 +1084,14 @@ fn eval_aggregation_compiled(
     if hi < lo {
         return Ok(acc);
     }
-    let count = (hi - lo + 1).min(100_000);
+    let count = hi.saturating_sub(lo).saturating_add(1).min(100_000);
     let mut sub_scratch = EvalScratch::new();
     let initial_refs: Vec<(&str, f64)> = overrides.iter().map(|(k, v)| (k.as_str(), *v)).collect();
     sub.bind_slots(ctx, &initial_refs, &mut sub_scratch);
     let var_slot = sub.slot_of(var);
 
     for offset in 0..count {
-        let k_val = (lo + offset) as f64;
+        let k_val = lo.saturating_add(offset) as f64;
         if let Some(slot) = var_slot {
             sub.set_slot(slot, k_val, &mut sub_scratch);
         }
@@ -1192,7 +1162,9 @@ fn eval_function_call(
             fn_overrides.push((p.as_str(), v));
         }
         let mut sub_scratch = EvalScratch::new();
-        user_fn.body.bind_slots(ctx, &fn_overrides, &mut sub_scratch);
+        user_fn
+            .body
+            .bind_slots(ctx, &fn_overrides, &mut sub_scratch);
         return user_fn
             .body
             .eval_internal(ctx, &mut sub_scratch, &fn_overrides, depth + 1);
@@ -1203,10 +1175,9 @@ fn eval_function_call(
         if args.len() == 1 {
             let h = ctx.diff_h.clamp(1e-8_f64, 1e-3_f64);
             let x0 = args[0];
-            if let (Some(fp), Some(fm)) = (
-                eval_builtin(name, &[x0 + h]),
-                eval_builtin(name, &[x0 - h]),
-            ) {
+            if let (Some(fp), Some(fm)) =
+                (eval_builtin(name, &[x0 + h]), eval_builtin(name, &[x0 - h]))
+            {
                 if prime_order == 1 {
                     return Ok((fp - fm) / (2.0_f64 * h));
                 } else if let Some(f0) = eval_builtin(name, &[x0]) {
@@ -1241,17 +1212,12 @@ fn eval_function_call(
 
     // 4. Desmos-style implicit multiplication fallback: `a(x + 1)` where `a` is a bound parameter
     if prime_order == 0 && args.len() == 1 {
-        if let Some(var_val) =
-            resolve_var_value(name, ctx, var_names, scratch, active_overrides)
-        {
+        if let Some(var_val) = resolve_var_value(name, ctx, var_names, scratch, active_overrides) {
             return Ok(var_val * args[0]);
         }
     }
 
-    Err(MathError::new(
-        format!("Unknown function `{}`", name),
-        span,
-    ))
+    Err(MathError::new(format!("Unknown function `{}`", name), span))
 }
 
 pub fn eval_fn_val_and_deriv(
@@ -1261,6 +1227,12 @@ pub fn eval_fn_val_and_deriv(
     ctx: &EvalContext<'_>,
     depth: usize,
 ) -> Result<(f64, f64), MathError> {
+    if depth > ctx.max_recursion_depth {
+        return Err(MathError::new(
+            "Maximum function recursion depth exceeded",
+            span,
+        ));
+    }
     let h = ctx.diff_h.clamp(1e-8_f64, 1e-3_f64);
     let step = h.max(x0.abs() * h * 0.1_f64);
     if let Some(user_fn) = ctx.functions.get(fn_name) {
@@ -1272,7 +1244,11 @@ pub fn eval_fn_val_and_deriv(
         }
         let param = user_fn.params[0].clone();
         let mut s = EvalScratch::new();
-        let y0 = user_fn.body.eval(ctx, &[(param.as_str(), x0)], &mut s)?;
+        let ov_ref = [(param.as_str(), x0)];
+        user_fn.body.bind_slots(ctx, &ov_ref, &mut s);
+        let y0 = user_fn
+            .body
+            .eval_internal(ctx, &mut s, &ov_ref, depth + 1)?;
         let mut ov = vec![(param.clone(), x0)];
         let dy = eval_numerical_derivative_compiled(
             &user_fn.body,
@@ -1281,7 +1257,7 @@ pub fn eval_fn_val_and_deriv(
             1,
             ctx,
             &mut ov,
-            depth,
+            depth + 1,
         )?;
         return Ok((y0, dy));
     }
@@ -1293,7 +1269,10 @@ pub fn eval_fn_val_and_deriv(
         return Ok((y0, (fp - fm) / (2.0_f64 * step)));
     }
     Err(MathError::new(
-        format!("Unknown function `{}` in calculus/economics operator", fn_name),
+        format!(
+            "Unknown function `{}` in calculus/economics operator",
+            fn_name
+        ),
         span,
     ))
 }
@@ -1304,16 +1283,28 @@ fn eval_single_fn_at(
     span: Span,
     ctx: &EvalContext<'_>,
     scratch: &mut EvalScratch,
+    depth: usize,
 ) -> Result<f64, MathError> {
+    if depth > ctx.max_recursion_depth {
+        return Err(MathError::new(
+            "Maximum function recursion depth exceeded",
+            span,
+        ));
+    }
     if let Some(user_fn) = ctx.functions.get(fn_name) {
         if let Some(param) = user_fn.params.first() {
-            return user_fn.body.eval(ctx, &[(param.as_str(), x)], scratch);
+            let ov_ref = [(param.as_str(), x)];
+            user_fn.body.bind_slots(ctx, &ov_ref, scratch);
+            return user_fn.body.eval_internal(ctx, scratch, &ov_ref, depth + 1);
         }
     }
     if let Some(v) = eval_builtin(fn_name, &[x]) {
         return Ok(v);
     }
-    Err(MathError::new(format!("Unknown function `{}`", fn_name), span))
+    Err(MathError::new(
+        format!("Unknown function `{}`", fn_name),
+        span,
+    ))
 }
 
 /// Finds the first positive intersection `f(x*) = g(x*)` for `surplus(f, g)`.
@@ -1322,36 +1313,39 @@ pub fn find_surplus_equilibrium_x(
     g_name: &str,
     ctx: &EvalContext<'_>,
     span: Span,
-    _depth: usize,
+    depth: usize,
 ) -> Result<f64, MathError> {
+    if depth > ctx.max_recursion_depth {
+        return Err(MathError::new(
+            "Maximum function recursion depth exceeded",
+            span,
+        ));
+    }
     let mut s1 = EvalScratch::new();
     let mut s2 = EvalScratch::new();
     // Verify both functions exist
-    let _ = eval_single_fn_at(f_name, 1.0_f64, span, ctx, &mut s1)?;
-    let _ = eval_single_fn_at(g_name, 1.0_f64, span, ctx, &mut s2)?;
+    let _ = eval_single_fn_at(f_name, 1.0_f64, span, ctx, &mut s1, depth + 1)?;
+    let _ = eval_single_fn_at(g_name, 1.0_f64, span, ctx, &mut s2, depth + 1)?;
 
     let roots = super::solver::find_real_roots_1d(
         |x| {
-            let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1).ok()?;
-            let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2).ok()?;
+            let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1, depth + 1).ok()?;
+            let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2, depth + 1).ok()?;
             Some(yf - yg)
         },
         1e-4_f64,
         200.0_f64,
         400,
     );
-    roots
-        .into_iter()
-        .find(|&r| r > 1e-4_f64)
-        .ok_or_else(|| {
-            MathError::new(
-                format!(
-                    "No positive equilibrium intersection found between `{}` and `{}`",
-                    f_name, g_name
-                ),
-                span,
-            )
-        })
+    roots.into_iter().find(|&r| r > 1e-4_f64).ok_or_else(|| {
+        MathError::new(
+            format!(
+                "No positive equilibrium intersection found between `{}` and `{}`",
+                f_name, g_name
+            ),
+            span,
+        )
+    })
 }
 
 /// Computes `∫_a^b (f(x) - g(x)) dx` via composite Simpson's rule.
@@ -1362,8 +1356,14 @@ pub fn eval_area_between_fns(
     b: f64,
     span: Span,
     ctx: &EvalContext<'_>,
-    _depth: usize,
+    depth: usize,
 ) -> Result<f64, MathError> {
+    if depth > ctx.max_recursion_depth {
+        return Err(MathError::new(
+            "Maximum function recursion depth exceeded",
+            span,
+        ));
+    }
     if !a.is_finite() || !b.is_finite() {
         return Ok(f64::NAN);
     }
@@ -1379,8 +1379,8 @@ pub fn eval_area_between_fns(
     let mut s1 = EvalScratch::new();
     let mut s2 = EvalScratch::new();
     let mut eval_diff = |x: f64| -> Result<f64, MathError> {
-        let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1)?;
-        let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2)?;
+        let yf = eval_single_fn_at(f_name, x, span, ctx, &mut s1, depth + 1)?;
+        let yg = eval_single_fn_at(g_name, x, span, ctx, &mut s2, depth + 1)?;
         Ok(yf - yg)
     };
     let mut sum = eval_diff(a)? + eval_diff(b)?;
@@ -1640,7 +1640,9 @@ impl CompilerBuilder {
                             return;
                         }
                     }
-                    if matches!(name.as_str(), "area" | "surplus") && (args.len() == 2 || args.len() == 4) {
+                    if matches!(name.as_str(), "area" | "surplus")
+                        && (args.len() == 2 || args.len() == 4)
+                    {
                         if let (Some(f_name), Some(g_name)) =
                             (extract_fn_arg_name(&args[0]), extract_fn_arg_name(&args[1]))
                         {
